@@ -1,0 +1,8 @@
+# Star Trek Deck
+# Format: [quantity]x Card Name (set) collector_number
+
+1x Captain Jean-Luc Picard (sta) 1
+1x Commander William Riker (sta) 2
+1x Commander Data (sta) 3
+1x Lieutenant Worf (sta) 4
+1x Dr. Beverly Crusher (sta) 5

@@ -1,0 +1,83 @@
+1x Rose Tyler (who) 346
+1x The Thirteenth Doctor (who) 448
+1x Regenerations Restored (who) 435
+1x Wilfred Mott (who) 350
+1x Doc Aurlock, Grizzled Genius (otj) 201
+1x Sisterhood of Karn (who) 399
+1x Vega, the Watcher (khm) 332
+1x Anticausal Vestige (eoe) 317
+1x Fblthp, Lost on the Range (otj) 319
+1x Fortune Teller's Talent (blc) 14
+1x Oracle's Vault (ncc) 374
+1x Panoptic Mirror (dst) 136
+1x River Song's Diary (who) 460
+1x The Foretold Soldier (who) 395
+1x The Reality Chip (neo) 449
+1x Goldberry, River-Daughter (ltr) 503
+1x Kami of Whispered Hopes (mom) 383
+1x Resourceful Defense (eoc) 67
+1x The Ozolith (iko) 362
+1x Behold the Multiverse (khm) 46
+1x Esper Sentinel (mh2) 328
+1x Pollywog Prodigy (blc) 50
+1x Abstergo Entertainment (acr) 79
+1x Adagia, Windswept Bastion (eoe) 250
+1x Azorius Chancery (dsc) 261
+1x Boseiju, Who Endures (neo) 266
+1x Bountiful Promenade (clb) 348
+1x Breeding Pool (rvr) 293
+1x Command Tower (eoc) 59
+5x Forest (tdm) 291
+1x Gavony Township (moc) 406
+1x Hallowed Fountain (rvr) 280
+10x Island (tdm) 288
+1x Karn's Bastion (eoc) 163
+1x Mystic Sanctuary (mkc) 277
+1x Otawara, Soaring City (neo) 271
+1x Path of Ancestry (tdc) 382
+5x Plains (tdm) 287
+1x Rejuvenating Springs (cmm) 424
+1x Sea of Clouds (clb) 360
+1x Spara's Headquarters (snc) 257
+1x Temple Garden (rvr) 290
+1x Trenzalore Clocktower (who) 190
+1x As Foretold (who) 469
+1x Rod of Absorption (afc) 288
+1x Dreamtide Whale (mh3) 450
+1x Virtue of Strength // Garenbrig Growth (woe) 197
+1x Bala Ged Recovery // Bala Ged Sanctuary (plst) ZNR-180
+1x Evolution Witness (mh3) 151
+1x Noxious Revival (spg) 73
+1x Brazen Borrower // Petty Theft (plst) ELD-281
+1x Crack in Time (who) 336
+1x Depart the Realm (khm) 53
+1x Doomskar (khm) 9
+1x Extraordinary Journey (woe) 48
+1x Green Slime (clb) 636
+1x Ondu Inversion // Ondu Skyruins (znr) 30
+1x Out of Time (who) 467
+1x Ravenform (lcc) 167
+1x Saw It Coming (khm) 76
+1x Swords to Plowshares (who) 212
+1x The Moment (who) 459
+1x Tragic Arrogance (c21) 109
+1x Vanquish the Horde (inr) 302
+1x Ancestral Vision (tdc) 144
+1x Delay (tsr) 61
+1x Gaea's Will (mh2) 461
+1x Inevitable Betrayal (mh2) 47
+1x Inspiring Refrain (who) 216
+1x Reality Strobe (fut) 43
+1x Restore Balance (tsr) 36
+1x Riftwing Cloudskate (tsr) 82
+1x Taigam, Master Opportunist (tdm) 60
+1x The Wedding of River Song (who) 349
+1x Venture Forth (clb) 683
+1x Contest of Claws (lcc) 24
+1x Alaundo the Seer (clb) 264
+1x All of History, All at Once (who) 352
+1x Dust of Moments (fut) 5
+1x Jhoira's Timebug (tsr) 269
+1x Rotating Fireplace (who) 461
+1x Time Beetle (who) 58
+1x Wibbly-wobbly, Timey-wimey (who) 62

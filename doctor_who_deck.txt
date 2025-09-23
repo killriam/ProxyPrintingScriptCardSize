@@ -1,0 +1,15 @@
+# Doctor Who Deck
+# Format: [quantity]x Card Name (set) collector_number
+
+# Doctor Who cards
+1x Rose Tyler (who) 346
+1x The Thirteenth Doctor (who) 448
+1x Regenerations Restored (who) 435
+1x Wilfred Mott (who) 350
+1x Doc Aurlock, Grizzled Genius (otj) 201
+
+# Some Magic cards for testing
+1x Sol Ring (c21) 263
+1x Arcane Signet (ncc) 360
+1x Lightning Bolt (m11) 149
+2x Island (unf) 453
