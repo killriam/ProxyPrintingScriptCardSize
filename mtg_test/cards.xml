@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root>
+  <fronts>
+    <card>
+      <name>Black Lotus.jpg</name>
+      <id>1</id>
+      <slots>1, 2, 3</slots>
+    </card>
+    <card>
+      <name>Ancestral Recall.png</name>
+      <id>2</id>
+      <slots>4, 5</slots>
+    </card>
+    <card>
+      <name>Time Walk.jpg</name>
+      <id>3</id>
+      <slots>6</slots>
+    </card>
+    <card>
+      <name>Mox Sapphire.jpg</name>
+      <id>4</id>
+      <slots>7, 8, 9, 10</slots>
+    </card>
+  </fronts>
+</root>
