@@ -11,6 +11,7 @@ import tempfile
 import json
 import shlex
 import time
+import glob
 
 # Import library-based processor if available
 try:
@@ -18,6 +19,46 @@ try:
     LIBRARY_PROCESSOR_AVAILABLE = True
 except ImportError:
     LIBRARY_PROCESSOR_AVAILABLE = False
+
+
+def find_matching_image_file(image_dir, card_filename):
+    """
+    Find an image file that matches the card filename, even if it has Google Drive IDs appended.
+    
+    For example:
+    - XML has: "Alaundo the Seer (Alter Dei).png"
+    - Actual file: "Alaundo the Seer (Alter Dei) (1lNxVnit0-z1kze_1IilmxKOqdIgKJOGS).png"
+    
+    Returns the actual filename if found, or None if not found.
+    """
+    image_path = Path(image_dir)
+    if not image_path.exists():
+        return None
+    
+    # First try exact match
+    exact_path = image_path / card_filename
+    if exact_path.exists():
+        return exact_path
+    
+    # Extract base name and extension
+    name_without_ext, ext = os.path.splitext(card_filename)
+    
+    # Look for files that start with the base name and have the same extension
+    pattern = f"{glob.escape(name_without_ext)} (*){ext}"
+    matching_files = list(image_path.glob(pattern))
+    
+    if matching_files:
+        return matching_files[0]  # Return the first match
+    
+    # If no match with Google Drive ID pattern, try a more relaxed search
+    # Look for any file that starts with the base name
+    pattern = f"{glob.escape(name_without_ext)}*{ext}"
+    matching_files = list(image_path.glob(pattern))
+    
+    if matching_files:
+        return matching_files[0]  # Return the first match
+    
+    return None
 
 SETTINGS_FILE = Path(__file__).with_suffix('.settings.json')
 
@@ -180,15 +221,29 @@ def create_scribus_files_from_xml(
             
             # Create image path based on whether it's in mtg_test or mtg
             if is_test_xml:
+                image_dir = base_dir / "mtg_test" / "images" / deck_name
                 image_path = f"mtg_test/images/{deck_name}/{card_filename}"
-                # Check if the image file exists (as a verification step)
-                full_image_path = base_dir / "mtg_test" / "images" / deck_name / card_filename
             else:
+                image_dir = mtg_dir / "images" / deck_name
                 image_path = f"mtg/images/{deck_name}/{card_filename}"
-                # Check if the image file exists (as a verification step)
-                full_image_path = mtg_dir / "images" / deck_name / card_filename
-                
-            if not full_image_path.exists():
+            
+            # Try to find the actual image file (handles Google Drive IDs)
+            actual_image_path = find_matching_image_file(image_dir, card_filename)
+            
+            if actual_image_path:
+                full_image_path = actual_image_path
+                # Update image_path to use the actual filename
+                actual_filename = actual_image_path.name
+                if is_test_xml:
+                    image_path = f"mtg_test/images/{deck_name}/{actual_filename}"
+                else:
+                    image_path = f"mtg/images/{deck_name}/{actual_filename}"
+            else:
+                # Fall back to the original logic
+                if is_test_xml:
+                    full_image_path = base_dir / "mtg_test" / "images" / deck_name / card_filename
+                else:
+                    full_image_path = mtg_dir / "images" / deck_name / card_filename
                 print(f"Warning: Image file not found: {full_image_path}")
                 # Still proceed, as image might be added later
             

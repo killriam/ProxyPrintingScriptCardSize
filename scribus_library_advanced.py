@@ -207,7 +207,7 @@ class ScribusLibraryProcessor:
                 
                 # Draw placeholder rectangle if image failed
                 canvas_obj.setStrokeColor('red')
-                canvas_obj.setFillColor('lightgray')
+                canvas_obj.setFillColor(0.9, 0.9, 0.9)  # Light gray using RGB values
                 canvas_obj.rect(x, y, width, height, fill=1)
                 canvas_obj.setFillColor('red')
                 canvas_obj.drawCentredString(x + width/2, y + height/2, "IMAGE")
