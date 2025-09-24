@@ -1,0 +1,5 @@
+ERROR
+module 'scribus' has no attribute 'getPrinterNames'
+Traceback (most recent call last):
+  File "<string>", line 7, in <module>
+AttributeError: module 'scribus' has no attribute 'getPrinterNames'
