@@ -11,10 +11,23 @@ import time
 import re
 import sys
 import urllib.parse
+from find_matching_image import find_matching_image
 
-def crop_and_center_image(image_path, output_path, crop_percentage_top=0.07, crop_percentage_bottom=0.07, crop_percentage_left_right=0.07, canvas_size=(2.5 * 300, 3.5 * 300), dpi=300):
+def crop_and_center_image(image_path, output_path, crop_percentage_top=0.04, crop_percentage_bottom=0.03, crop_percentage_left_right=None, canvas_size=(2.5 * 300, 3.5 * 300), dpi=300):
     """
     Crop the image, scale it, and center it on a rectangular canvas.
+    crop_percentage_left_righ        # Parse            for card in section.findall("card"):
+                # Get card name (support both <n> and legacy <n> tags)
+                card_name_elem = card.find("name")
+                if card_name_elem is None:
+                    card_name_elem = card.find("n")  # Try legacy format
+                
+                if card_name_elem is None:
+                    print(f"Warning: Card without name tag found, skipping")
+                    continuefile
+        tree = ET.parse(str(xml_file))
+        root = tree.getroot()mputed automatically so the cropped image
+    matches the canvas aspect ratio (fits the proportion). If provided, used as-is.
     """
     # Reduce canvas size by 8% for scaling
     canvas_width, canvas_height = canvas_size
@@ -25,11 +38,66 @@ def crop_and_center_image(image_path, output_path, crop_percentage_top=0.07, cro
     img = Image.open(image_path)
     img_width, img_height = img.size
 
-    # Crop the image by the specified percentages
-    crop_left_right = int(img_width * crop_percentage_left_right)
+    # Initial top/bottom crop in pixels
     crop_top = int(img_height * crop_percentage_top)
     crop_bottom = int(img_height * crop_percentage_bottom)
-    img = img.crop((crop_left_right, crop_top, img_width - crop_left_right, img_height - crop_bottom))
+
+    # Height after top/bottom crop
+    cropped_height = img_height - crop_top - crop_bottom
+    if cropped_height <= 0:
+        raise ValueError("Top/bottom crop too large for image height")
+
+    # Desired aspect ratio from canvas
+    target_ar = canvas_width / canvas_height
+
+    # If left/right percentage is provided, use it. Otherwise compute left/right crop so the
+    # resulting cropped image has the same aspect ratio as the canvas (fits the proportion).
+    if crop_percentage_left_right is not None:
+        crop_lr = int(img_width * crop_percentage_left_right)
+        left = crop_lr
+        right = img_width - crop_lr
+        top = crop_top
+        bottom = img_height - crop_bottom
+    else:
+        # Compute width that would match target aspect ratio given the cropped height
+        desired_width = int(cropped_height * target_ar)
+
+        if desired_width < img_width:
+            # Need to crop left/right to reach desired width
+            crop_lr_each = (img_width - desired_width) // 2
+            left = crop_lr_each
+            right = img_width - crop_lr_each
+            top = crop_top
+            bottom = img_height - crop_bottom
+        else:
+            # Desired width is larger than image width -> need to crop more top/bottom instead.
+            # Compute desired height given current width and target aspect ratio.
+            desired_height = int(img_width / target_ar)
+            if desired_height < cropped_height:
+                extra = cropped_height - desired_height
+                extra_top = extra // 2
+                extra_bottom = extra - extra_top
+                top = crop_top + extra_top
+                bottom = img_height - (crop_bottom + extra_bottom)
+                left = 0
+                right = img_width
+            else:
+                # No additional cropping necessary; fall back to no left/right crop
+                left = 0
+                right = img_width
+                top = crop_top
+                bottom = img_height - crop_bottom
+
+    # Ensure coordinates are within bounds
+    left = max(0, int(left))
+    top = max(0, int(top))
+    right = min(img_width, int(right))
+    bottom = min(img_height, int(bottom))
+    if right <= left or bottom <= top:
+        raise ValueError("Computed crop box is invalid")
+
+    # Crop the image
+    img = img.crop((left, top, right, bottom))
 
     # Calculate the scaling factor to fit the image within the canvas
     scale_x = canvas_width / img.width
@@ -362,28 +430,31 @@ def download_missing_images_from_xml(xml_file, images_dir, delay=0.5):
             if not card_id or not card_filename:
                 continue
             
-            # Parse the card name and set from the filename
-            # Expecting format like "Card Name (SET-ID).jpg"
-            match = re.match(r'(.+) \(([A-Za-z0-9]+)-([0-9]+)\)\.jpg', card_filename)
-            if not match:
-                print(f"Could not parse card filename: {card_filename}")
-                continue
-                
-            card_name = match.group(1)
-            set_code = match.group(2).lower()  # Scryfall uses lowercase set codes
-            collector_number = match.group(3)
-            
-            # Check if image already exists
+            # Check if image already exists in the specified images directory
             image_path = images_dir / card_filename
             if image_path.exists():
                 print(f"Image already exists: {image_path}")
                 continue
-                
-            # Construct the Scryfall API URL
-            api_url = f"https://api.scryfall.com/cards/{set_code}/{collector_number}"
             
+            # Check if there's a query element that we can use directly
+            query_elem = card.find("query")
+            
+            # Don't download if no query element exists
+            if query_elem is None or not query_elem.text:
+                print(f"No query element found for {card_filename}, skipping download")
+                continue
+                
+            # Use the query element directly to search Scryfall
+            card_name = query_elem.text
+            set_code = None
+            collector_number = None
+            
+            # Construct Scryfall API URL for fuzzy search
+            api_url = f"https://api.scryfall.com/cards/named?fuzzy={urllib.parse.quote(card_name)}"
+                
             try:
-                print(f"Looking up: {card_name} ({set_code}) {collector_number}")
+                print(f"Looking up by name: {card_name}")
+                
                 response = requests.get(api_url)
                 response.raise_for_status()
                 card_data = response.json()
@@ -400,7 +471,7 @@ def download_missing_images_from_xml(xml_file, images_dir, delay=0.5):
                     continue
                 
                 # Download the image
-                print(f"Downloading: {card_name} ({set_code}-{collector_number})")
+                print(f"Downloading: {card_name}")
                 img_response = requests.get(image_url, stream=True)
                 img_response.raise_for_status()
                 
@@ -415,7 +486,7 @@ def download_missing_images_from_xml(xml_file, images_dir, delay=0.5):
                 time.sleep(delay)
                 
             except Exception as e:
-                print(f"Error downloading {card_name} ({set_code} {collector_number}): {e}")
+                print(f"Error downloading {card_name}: {e}")
         
         return downloaded_images
         
@@ -425,14 +496,18 @@ def download_missing_images_from_xml(xml_file, images_dir, delay=0.5):
         traceback.print_exc()
         return []
 
-def main(deck_list_path=None, xml_file_path=None):
+def main(deck_list_path=None, xml_file_path=None, images_dir_path=None):
     # Base directories (use MTG_DIR env var to override)
     # By default this will look for an `mtg` folder next to this script.
     script_dir = Path(__file__).resolve().parent
     mtg_dir = Path(os.environ.get("MTG_DIR", script_dir / "mtg"))
 
     # File paths (relative to mtg_dir)
-    images_dir = mtg_dir / "images"
+    # Use custom images directory if provided
+    if images_dir_path:
+        images_dir = Path(images_dir_path)
+    else:
+        images_dir = mtg_dir / "images"
     output_folder = mtg_dir / "prints"
     
     # Determine XML file and subfolders based on input parameters
@@ -449,7 +524,12 @@ def main(deck_list_path=None, xml_file_path=None):
             xml_name = xml_name[6:]  # Remove "cards_" prefix if present
             
         deck_subfolder = xml_name
-        images_dir = mtg_dir / "images" / deck_subfolder
+        # If custom images directory is provided, use it as the base directory
+        # Otherwise use the default mtg/images directory
+        if images_dir_path:
+            images_dir = Path(images_dir_path) / deck_subfolder
+        else:
+            images_dir = mtg_dir / "images" / deck_subfolder
         output_folder = mtg_dir / "prints" / deck_subfolder
         
         print(f"Using XML file: {xml_file}")
@@ -463,7 +543,10 @@ def main(deck_list_path=None, xml_file_path=None):
         deck_subfolder = deck_name
         
         # Create deck-specific subfolders
-        images_dir = mtg_dir / "images" / deck_subfolder
+        if images_dir_path:
+            images_dir = Path(images_dir_path) / deck_subfolder
+        else:
+            images_dir = mtg_dir / "images" / deck_subfolder
         output_folder = mtg_dir / "prints" / deck_subfolder
         xml_file = mtg_dir / f"cards_{deck_subfolder}.xml"
         
@@ -500,7 +583,13 @@ def main(deck_list_path=None, xml_file_path=None):
         # If direct XML file is provided, download any missing images
         elif xml_file_path:
             print(f"Checking for missing images in XML: {xml_file}")
-            download_missing_images_from_xml(xml_file, images_dir)
+            print(f"Images directory: {images_dir}")
+            
+            # Check if --no-download flag was provided (new option)
+            if '--no-download' in sys.argv:
+                print(f"Skipping image download (--no-download specified)")
+            else:
+                download_missing_images_from_xml(xml_file, images_dir)
         
         # Verify XML exists
         if not xml_file.exists():
@@ -510,44 +599,102 @@ def main(deck_list_path=None, xml_file_path=None):
         # Parse the XML file
         tree = ET.parse(str(xml_file))
         root = tree.getroot()
-
-        # Iterate over all cards in the <fronts> section
-        for card in root.find("fronts").findall("card"):
-            # Get card name (support both <name> and legacy <n> tags)
-            card_name_elem = card.find("name")
-            if card_name_elem is None:
-                card_name_elem = card.find("n")  # Try legacy format
-            
-            if card_name_elem is None:
-                print(f"Warning: Card without name tag found, skipping")
+        
+        # Process card sections (fronts and backs)
+        for section_name in ["fronts", "backs"]:
+            section = root.find(section_name)
+            if not section:
+                print(f"No '{section_name}' section found in XML")
                 continue
+
+            print(f"\nProcessing cards in <{section_name}> section...")
+            
+            for card in section.findall("card"):
+                # Get card name (support both <name> and legacy <n> tags)
+                card_name_elem = card.find("name")
+                if card_name_elem is None:
+                    card_name_elem = card.find("n")  # Try legacy format
                 
-            card_name = card_name_elem.text
-            card_id = card.find("id").text
-            slots = card.find("slots").text
+                if card_name_elem is None:
+                    print(f"Warning: Card without name tag found, skipping")
+                    continue
+                    
+                card_name = card_name_elem.text
+                
+                # Get card ID (Google Drive ID or MTG card ID)
+                card_id_elem = card.find("id")
+                if card_id_elem is None:
+                    print(f"Warning: Card without ID tag found, skipping")
+                    continue
+                card_id = card_id_elem.text
+                
+                # Get slots (might be 0-based in some XMLs)
+                slots_elem = card.find("slots")
+                if slots_elem is None:
+                    print(f"Warning: Card without slots tag found, using default 1")
+                    slots = "1"
+                else:
+                    slots = slots_elem.text
+                    # Handle 0-based slots
+                    if slots.strip() == "0":
+                        slots = "1"
 
-            # Calculate the number of copies based on slots
-            slot_list = [int(slot.strip()) for slot in slots.split(",") if slot.strip().isdigit()]
-            copies = len(slot_list)
+                # Calculate the number of copies based on slots
+                try:
+                    slot_list = [int(slot.strip()) for slot in slots.split(",") if slot.strip().isdigit()]
+                    copies = len(slot_list) if len(slot_list) > 0 else 1
+                except:
+                    # Default to 1 copy if slots can't be parsed
+                    copies = 1
 
-            # Construct the full image path
-            # Note: card_name is the full filename including extension
-            image_path = images_dir / card_name
+                # Try to find a matching image - either exact filename or similar
+                found_image_path = find_matching_image(images_dir, card_name)
+                
+                if found_image_path:
+                    print(f"Processing image: {found_image_path}")
+                    for copy_number in range(copies):
+                        output_filename = f"{card_name.rsplit('.', 1)[0]}_copy_{copy_number + 1}.bmp"
+                        output_image_path = output_folder / output_filename
+                        crop_and_center_image(str(found_image_path), str(output_image_path))
 
-            # Generate cropped images for each copy
-            if image_path.exists():
-                for copy_number in range(copies):
-                    output_filename = f"{card_name.rsplit('.', 1)[0]}_copy_{copy_number + 1}.bmp"
-                    output_image_path = output_folder / output_filename
-                    crop_and_center_image(str(image_path), str(output_image_path))
-
-                    # Send the cropped image to the printer
-                    send_image_to_printer(str(output_image_path), printer_name)
-            else:
-                print(f"Image not found: {image_path}")
+                        # Only print if not in no-print mode
+                        if '--no-print' not in sys.argv and not args.no_print:
+                            # Send the cropped image to the printer
+                            send_image_to_printer(str(output_image_path), printer_name)
+                        else:
+                            print(f"Skipping print for: {output_image_path} (--no-print specified)")
+                else:
+                    print(f"Image not found for: {card_name}")
+                    # Try to find the image in the base images directory
+                    base_image_path = find_matching_image(mtg_dir / "images", card_name)
+                    if base_image_path:
+                        print(f"Found image in base directory: {base_image_path}")
+                        # Copy the image to the deck-specific directory
+                        import shutil
+                        images_dir.mkdir(parents=True, exist_ok=True)
+                        target_path = images_dir / base_image_path.name
+                        shutil.copy(str(base_image_path), str(target_path))
+                        print(f"Copied image to: {target_path}")
+                        
+                        # Process the image as before
+                        for copy_number in range(copies):
+                            output_filename = f"{card_name.rsplit('.', 1)[0]}_copy_{copy_number + 1}.bmp"
+                            output_image_path = output_folder / output_filename
+                            crop_and_center_image(str(target_path), str(output_image_path))
+                            
+                            # Only print if not in no-print mode
+                            if '--no-print' not in sys.argv and not args.no_print:
+                                # Send the cropped image to the printer
+                                send_image_to_printer(str(output_image_path), printer_name)
+                            else:
+                                print(f"Skipping print for: {output_image_path} (--no-print specified)")
+                    else:
+                        print(f"Image not found in any location, consider downloading it.")
 
     except Exception as e:
         print(f"An error occurred: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     import argparse
@@ -559,14 +706,22 @@ if __name__ == "__main__":
                       help='Path to a deck list file to download card images and create XML')
     group.add_argument('-x', '--xml', dest='xml_file_path',
                       help='Path to an XML file with card information')
+    parser.add_argument('-i', '--images-dir', dest='images_dir_path',
+                      help='Custom path to the images directory')
     parser.add_argument('--no-print', action='store_true',
                       help='Download cards and create XML without printing')
+    parser.add_argument('--no-download', action='store_true',
+                      help='Do not download any images, use only existing images')
     
     # Add help for environment variables
     parser.epilog = '''
 Environment Variables:
   MTG_DIR         Base directory for images and output (default: ./mtg)
   PRINTER_NAME    Name of the printer to use (default: tanker)
+
+Custom Directories:
+  Use -i/--images-dir to specify a custom images directory
+  Example: python Print_cards_sm.py -x cards.xml -i C:\\path\\to\\images
 
 Deck List Format:
   1x Card Name (SET) Collector#
@@ -593,4 +748,4 @@ XML Format:
     if not (args.deck_list_path or args.xml_file_path) and len(sys.argv) > 1 and not sys.argv[1].startswith('-'):
         args.deck_list_path = sys.argv[1]
     
-    main(deck_list_path=args.deck_list_path, xml_file_path=args.xml_file_path)
+    main(deck_list_path=args.deck_list_path, xml_file_path=args.xml_file_path, images_dir_path=args.images_dir_path)
