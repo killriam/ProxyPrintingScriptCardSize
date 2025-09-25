@@ -80,4 +80,3 @@ Developer notes
 - The script uses a regex-based replacement to update the `PFILE` attributes inside the SLA XML. This is robust for the current template structure but not a full Scribus XML parser—if you swap to a significantly different template, verify matches.
 - `copy_slaTemplate.py` is used to duplicate the page inside Scribus; check that code for `COPIES` handling if you want different duplication behavior.
 
-If you want this README to be named differently or to include example outputs (file listings or example SLA snippets), tell me which content to add and I will update the file.
