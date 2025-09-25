@@ -1,0 +1,502 @@
+#!/usr/bin/env python3
+"""
+A simplified script to create multi-page Scribus documents:
+1. Read cards.xml file
+2. Copy .sla template
+3. Execute copy_slaTemplate.py with card count as parameter
+4. Replace image URLs with card-specific ones
+"""
+import sys
+import os
+import argparse
+import xml.etree.ElementTree as ET
+import shutil
+import subprocess
+import re
+import glob
+import time
+from pathlib import Path
+
+def main():
+    # Set up argument parser
+    parser = argparse.ArgumentParser(description="Create a multi-page Scribus document from an XML file")
+    parser.add_argument("xml_file", help="Path to XML file with card information")
+    parser.add_argument("--template", "-t", default="scribus_template_proxytest1.sla", help="Path to template SLA file")
+    parser.add_argument("--output-dir", "-o", help="Output directory (default: ready2Print/[deck_name])")
+    parser.add_argument("--base-dir", "-b", help="Base directory for the project")
+    parser.add_argument("--create-cardback", action="store_true", help="Create cardback SLA file")
+    args = parser.parse_args()
+    script_dir = Path(__file__).resolve().parent
+    base_dir = Path(args.base_dir) if args.base_dir else script_dir
+    
+    # Load XML file
+    try:
+        xml_path = Path(args.xml_file)
+        if not xml_path.is_absolute():
+            xml_path = base_dir / xml_path
+            
+        if not xml_path.exists():
+            print(f"Error: XML file not found: {xml_path}")
+            return 1
+        
+        print(f"Reading XML file: {xml_path}")
+        tree = ET.parse(str(xml_path))
+        root = tree.getroot()
+        
+        # Determine deck name from XML filename
+        deck_name = xml_path.stem
+        if deck_name.startswith("cards_"):
+            deck_name = deck_name[6:]  # Remove "cards_" prefix if present
+            
+        # Find all cards in the XML
+        fronts = root.find("fronts")
+        if fronts is None:
+            print("Error: No 'fronts' section found in XML file")
+            return 1
+            
+        cards = list(fronts.findall("card"))
+        card_count = len(cards)
+        print(f"Found {card_count} cards in XML file")
+        
+        if card_count == 0:
+            print("No cards found in XML file")
+            return 1
+            
+        # Determine output directory - always under ready2Print/
+        ready2print_dir = base_dir / "ready2Print"
+        if args.output_dir:
+            output_path = ready2print_dir / args.output_dir
+        else:
+            output_path = ready2print_dir / deck_name
+            
+        # Create output directory
+        output_path.mkdir(parents=True, exist_ok=True)
+            
+        # Determine if this is a test XML
+        is_test_xml = "mtg_test" in str(xml_path)
+        
+        # Determine image directories
+        mtg_dir = Path(os.environ.get("MTG_DIR", base_dir / "mtg"))
+        if is_test_xml:
+            image_dir = base_dir / "mtg_test" / "images" / deck_name
+        else:
+            image_dir = mtg_dir / "images" / deck_name
+            
+        print(f"Using image directory: {image_dir}")
+            
+        # Collect card image paths
+        card_image_paths = []
+        for card in cards:
+            # Try to find the card name element
+            card_name_elem = card.find("name")
+            if card_name_elem is None:
+                card_name_elem = card.find("n")  # Try legacy format
+                
+            if card_name_elem is None:
+                print(f"Warning: Card without name tag found, skipping")
+                card_image_paths.append(None)
+                continue
+                
+            card_filename = card_name_elem.text
+            
+            # Find matching image file
+            actual_image_path = find_matching_image_file(image_dir, card_filename)
+            
+            if actual_image_path and os.path.isfile(actual_image_path):
+                # Compute path relative to output directory for use in SLA
+                try:
+                    rel_path = os.path.relpath(actual_image_path, start=output_path)
+                    rel_path = rel_path.replace('\\', '/')
+                    card_image_paths.append(rel_path)
+                    print(f"Found image for card: {card_filename} -> {rel_path}")
+                except Exception as e:
+                    print(f"Error computing relative path for {actual_image_path}: {e}")
+                    # Use absolute path as fallback
+                    abs_path = str(actual_image_path).replace('\\', '/')
+                    card_image_paths.append(abs_path)
+                    print(f"Using absolute path for card: {card_filename} -> {abs_path}")
+            else:
+                print(f"Warning: No image found for card: {card_filename}")
+                card_image_paths.append(None)
+            
+        # Output directory has already been determined above
+        
+        # Set output file path
+        output_file_path = output_path / f"{deck_name}_multi.sla"
+        print(f"Output file will be: {output_file_path}")
+        
+        # Load template file
+        template_path = Path(args.template)
+        if not template_path.is_absolute():
+            template_path = base_dir / template_path
+            
+        if not template_path.exists():
+            print(f"Error: Template file not found: {template_path}")
+            return 1
+        
+        print(f"Using template: {template_path}")
+        
+        # Create a copy of the template as our output file
+        print(f"Copying template to output file...")
+        shutil.copy(template_path, output_file_path)
+        
+        # Now run the copy_slaTemplate.py script with Scribus
+        # The script duplicates the first page for each card
+        scribus_cmd = os.environ.get("SCRIBUS_CMD", "scribus")
+        script_path = base_dir / "copy_slaTemplate.py"
+        
+        if not script_path.exists():
+            print(f"Error: copy_slaTemplate.py not found at {script_path}")
+            return 1
+        
+        # Need to create card_count - 1 copies, since the first page already exists
+        copies_to_create = card_count - 1
+        
+        print(f"Running Scribus to add {copies_to_create} pages to the document...")
+        # Format the command as specified, with the SLA file first, then script parameters
+        cmd = [scribus_cmd, str(output_file_path), "-g", "-ns", "--python-script", str(script_path), str(copies_to_create)]
+        print(f"Executing: {' '.join(cmd)}")
+        
+        try:
+            result = subprocess.run(cmd, check=True, text=True, capture_output=True)
+            print("Scribus output:")
+            print(result.stdout)
+            if result.stderr:
+                print("Errors:")
+                print(result.stderr)
+            
+                
+            if os.path.exists(output_file_path):
+                print(f"Successfully created multi-page document with {card_count} pages:")
+                print(f"  {output_file_path}")
+                
+                # Now update the image paths in the SLA file
+                print("Updating image paths in the SLA file...")
+                if update_image_paths_in_sla(output_file_path, card_image_paths):
+                    print("Successfully updated image paths in the SLA file")
+                else:
+                    print("Warning: Failed to update image paths in the SLA file")
+                
+                # Create cardback SLA if requested
+                if args.create_cardback:
+                    print("Creating cardback SLA...")
+                    cardback_result = create_cardback_sla(args.xml_file, args.template, args.output_dir, base_dir)
+                    if cardback_result != 0:
+                        print("Warning: Failed to create cardback SLA")
+                
+                return 0
+            else:
+                print(f"Error: Output file not created")
+                return 1
+                
+        except subprocess.CalledProcessError as e:
+            print(f"Error running Scribus: {e}")
+            print(f"Command: {' '.join(cmd)}")
+            print(f"Output: {e.stdout}")
+            print(f"Error: {e.stderr}")
+            return 1
+        
+    except Exception as e:
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+def create_cardback_sla(xml_file, template, output_dir, base_dir):
+    """
+    Create a multi-page Scribus document for cardbacks using the cardback image from the XML.
+    """
+    # Load XML file
+    try:
+        xml_path = Path(xml_file)
+        if not xml_path.is_absolute():
+            xml_path = base_dir / xml_path
+            
+        if not xml_path.exists():
+            print(f"Error: XML file not found: {xml_path}")
+            return 1
+        
+        print(f"Reading XML file for cardback: {xml_path}")
+        tree = ET.parse(str(xml_path))
+        root = tree.getroot()
+        
+        # Determine deck name from XML filename
+        deck_name = xml_path.stem
+        if deck_name.startswith("cards_"):
+            deck_name = deck_name[6:]  # Remove "cards_" prefix if present
+            
+        # Get cardback ID from XML
+        cardback_elem = root.find('cardback')
+        if cardback_elem is not None:
+            cardback_id = cardback_elem.text
+            cardback_name = f"{cardback_id}.png"  # Assume .png extension
+        else:
+            cardback_name = "cardback.png"
+            
+        # Find all cards in the XML fronts
+        fronts = root.find("fronts")
+        if fronts is None:
+            print("Error: No 'fronts' section found in XML file")
+            return 1
+            
+        cards = list(fronts.findall("card"))
+        total_cards = len(cards)
+        print(f"Found {total_cards} cards for cardback SLA")
+        
+        # For cardback, create only 1 page
+        card_count = 1
+            
+        # Determine output directory - always under ready2Print/
+        ready2print_dir = base_dir / "ready2Print"
+        if output_dir:
+            output_path = ready2print_dir / output_dir
+        else:
+            output_path = ready2print_dir / deck_name
+            
+        # Create output directory
+        output_path.mkdir(parents=True, exist_ok=True)
+            
+        # Determine if this is a test XML
+        is_test_xml = "mtg_test" in str(xml_path)
+        
+        # Determine image directories
+        mtg_dir = Path(os.environ.get("MTG_DIR", base_dir / "mtg"))
+        if is_test_xml:
+            image_dir = base_dir / "mtg_test" / "images" / deck_name
+        else:
+            image_dir = mtg_dir / "images" / deck_name
+            
+        print(f"Using image directory for cardback: {image_dir}")
+            
+        # Find cardback image
+        cardback_image_path = find_matching_image_file(image_dir, cardback_name)
+        
+        # If not found, try fallback names
+        if not cardback_image_path:
+            fallback_names = ["cardback.png", "cardback.jpg", "Cardback.png", "Cardback.jpg"]
+            for name in fallback_names:
+                cardback_image_path = find_matching_image_file(image_dir, name)
+                if cardback_image_path:
+                    print(f"Found cardback image with fallback name: {name}")
+                    break
+        
+        # If still not found, look for files containing the cardback ID
+        if not cardback_image_path and cardback_elem is not None:
+            pattern = f"*{cardback_id}*.png"
+            matching_files = list(Path(image_dir).glob(pattern))
+            if matching_files:
+                cardback_image_path = matching_files[0]
+                print(f"Found cardback image by ID: {matching_files[0].name}")
+            else:
+                pattern = f"*{cardback_id}*.jpg"
+                matching_files = list(Path(image_dir).glob(pattern))
+                if matching_files:
+                    cardback_image_path = matching_files[0]
+                    print(f"Found cardback image by ID: {matching_files[0].name}")
+        
+        if not cardback_image_path:
+            print(f"Error: Cardback image not found: {cardback_name} in {image_dir}")
+            return 1
+        
+        # Compute relative path
+        try:
+            rel_path = os.path.relpath(cardback_image_path, start=output_path)
+            rel_path = rel_path.replace('\\', '/')
+            print(f"Using cardback image: {rel_path}")
+        except Exception as e:
+            print(f"Error computing relative path for cardback: {e}")
+            # Use absolute path as fallback
+            abs_path = str(cardback_image_path).replace('\\', '/')
+            rel_path = abs_path
+            print(f"Using absolute path for cardback: {abs_path}")
+        
+        # All pages use the same cardback image
+        card_image_paths = [rel_path] * card_count
+        
+        # Set output file path
+        output_file_path = output_path / f"{deck_name}_cardback.sla"
+        print(f"Cardback output file will be: {output_file_path}")
+        
+        # Load template file
+        template_path = Path(template)
+        if not template_path.is_absolute():
+            template_path = base_dir / template_path
+            
+        if not template_path.exists():
+            print(f"Error: Template file not found: {template_path}")
+            return 1
+        
+        print(f"Using template for cardback: {template_path}")
+        
+        # Create a copy of the template as our output file
+        print("Copying template to cardback output file...")
+        shutil.copy(template_path, output_file_path)
+        # Ensure the SLA is only a single page (remove any extra pages if present)
+        sanitize_sla_keep_first_page(output_file_path)
+
+        # No duplication needed for cardback — template already has one page
+        print("Skipping page duplication for cardback (single page document).")
+        if os.path.exists(output_file_path):
+            print(f"Cardback document ready: {output_file_path}")
+            # Now update the image paths in the SLA file
+            print("Updating image path in the cardback SLA file...")
+            if update_image_paths_in_sla(output_file_path, card_image_paths):
+                print("Successfully updated image path in the cardback SLA file")
+                return 0
+            else:
+                print("Warning: Failed to update image paths in the cardback SLA file")
+                return 1
+        else:
+            print("Error: Cardback output file not created")
+            return 1
+        
+    except Exception as e:
+        print(f"Error in create_cardback_sla: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+def find_matching_image_file(image_dir, card_filename):
+    """
+    Find an image file that matches the card filename, even if it has Google Drive IDs appended.
+    
+    Returns the actual filename if found, or None if not found.
+    """
+    image_path = Path(image_dir)
+    if not image_path.exists():
+        return None
+    
+    # First try exact match
+    exact_path = image_path / card_filename
+    if exact_path.exists():
+        return exact_path
+    
+    # Extract base name and extension
+    name_without_ext, ext = os.path.splitext(card_filename)
+    
+    # Look for files that start with the base name and have the same extension
+    pattern = f"{glob.escape(name_without_ext)} (*){ext}"
+    matching_files = list(image_path.glob(pattern))
+    
+    if matching_files:
+        return matching_files[0]  # Return the first match
+    
+    # If no match with Google Drive ID pattern, try a more relaxed search
+    # Look for any file that starts with the base name
+    pattern = f"{glob.escape(name_without_ext)}*{ext}"
+    matching_files = list(image_path.glob(pattern))
+    
+    if matching_files:
+        return matching_files[0]  # Return the first match
+    
+    return None
+
+
+def sanitize_sla_keep_first_page(sla_file_path):
+    """
+    Ensure the SLA file contains only the first <PAGE .../> element and set ANZPAGES to 1.
+    This protects against accidentally duplicated SLA files.
+    """
+    try:
+        with open(sla_file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # Find all self-closing PAGE tags
+        page_pat = re.compile(r'<PAGE\b[^>]*?/>', re.DOTALL)
+        pages = list(page_pat.finditer(content))
+        if len(pages) <= 1:
+            # nothing to do
+            return True
+
+        first = content[pages[0].start():pages[0].end()]
+        # Build new content: keep everything before first PAGE, insert first PAGE, then keep everything after last PAGE
+        new_content = content[:pages[0].start()] + first + content[pages[-1].end():]
+
+        # Force DOCUMENT ANZPAGES="1"
+        new_content = re.sub(r'ANZPAGES="\d+"', 'ANZPAGES="1"', new_content)
+
+        with open(sla_file_path, 'w', encoding='utf-8') as f:
+            f.write(new_content)
+
+        print(f"Sanitized SLA to a single page: {sla_file_path}")
+        return True
+    except Exception as e:
+        print(f"Warning: Failed to sanitize SLA file {sla_file_path}: {e}")
+        return False
+
+def check_file_exists(file_path):
+    """
+    Check if a file exists and print a warning if it doesn't.
+    
+    Args:
+        file_path: Path to the file to check
+        
+    Returns:
+        True if the file exists, False otherwise
+    """
+    if file_path and os.path.isfile(file_path):
+        return True
+    print(f"Warning: File not found: {file_path}")
+    return False
+
+def update_image_paths_in_sla(sla_file_path, card_image_paths):
+    """
+    Update the image paths in the SLA file for each page.
+    
+    Args:
+        sla_file_path: Path to the SLA file
+        card_image_paths: List of paths to card images, one per page
+    """
+    try:
+        # First, read the entire SLA file
+        with open(sla_file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        print(f"Debug: SLA file content length: {len(content)} characters")
+        
+        # Find all the image references
+        image_pattern = r'<PAGEOBJECT.*?OwnPage="(\d+)".*?PFILE="([^"]*)"'
+        matches = re.findall(image_pattern, content)
+        print(f"Debug: Found {len(matches)} image references in SLA file")
+        
+        # Function to replace image paths in the matched groups
+        def replace_image(match):
+            page_num = int(match.group(1))  # OwnPage is now group 1
+            current_path = match.group(2)  # PFILE is now group 2
+            
+            # Only replace if we have a path for this page and it's different
+            if 0 <= page_num < len(card_image_paths) and card_image_paths[page_num]:
+                new_path = card_image_paths[page_num]
+                if current_path != new_path:
+                    print(f"Debug: Page {page_num}: Replacing '{current_path}' with '{new_path}'")
+                    # Replace the path but keep everything else unchanged
+                    return match.group(0).replace(f'PFILE="{current_path}"', f'PFILE="{new_path}"')
+                else:
+                    print(f"Debug: Page {page_num}: Path already correct: '{current_path}'")
+            else:
+                print(f"Debug: Page {page_num}: No replacement needed (current: '{current_path}')")
+            
+            return match.group(0)  # No change
+        
+        # Replace all image paths
+        new_content = re.sub(image_pattern, replace_image, content)
+        
+        # Count actual changes
+        changes_made = content != new_content
+        print(f"Debug: Changes made to SLA file: {changes_made}")
+        
+        # Write the updated content back to the file
+        with open(sla_file_path, 'w', encoding='utf-8') as f:
+            f.write(new_content)
+        
+        print(f"Debug: Updated SLA file written successfully")
+        return True
+    
+    except Exception as e:
+        print(f"Error updating image paths in SLA file: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+if __name__ == "__main__":
+    sys.exit(main())

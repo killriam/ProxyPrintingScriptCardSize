@@ -1,3 +1,35 @@
+# Ignore everything by default
+*
+
+# But keep specific files needed to run the simple_multi_page.py workflow
+!.gitignore
+!simple_multi_page.py
+!copy_slaTemplate.py
+!scribus_template_proxytest1.sla
+!README_simple_multi_page.md
+!.gitkeep
+
+# Keep empty directories used by the workflow via .gitkeep files
+!mtg/
+!mtg/.gitkeep
+!mtg/images/
+!mtg/images/.gitkeep
+!ready2Print/
+!ready2Print/.gitkeep
+!mtg_test/
+!mtg_test/.gitkeep
+!mtg_test/images/
+!mtg_test/images/.gitkeep
+!orgScripts/
+!orgScripts/.gitkeep
+
+# Typical ignores
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+Thumbs.db
+.DS_Store
 mtg/images/*
 mtg/prints/*
 ready2Print/*
