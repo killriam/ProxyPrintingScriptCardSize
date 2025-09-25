@@ -13,6 +13,67 @@ import sys
 import urllib.parse
 from find_matching_image import find_matching_image
 
+def get_available_printers():
+    """Get a list of available printers on the system."""
+    printers = []
+    printer_info = win32print.EnumPrinters(win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS)
+    for printer in printer_info:
+        printers.append(printer[2])  # printer[2] is the printer name
+    return printers
+
+def select_printer():
+    """Allow user to select a printer from available printers."""
+    printers = get_available_printers()
+    
+    if not printers:
+        print("No printers found on this system!")
+        return None
+    
+    print("\nAvailable printers:")
+    for i, printer in enumerate(printers, 1):
+        print(f"{i}. {printer}")
+    
+    while True:
+        try:
+            choice = input(f"\nSelect printer (1-{len(printers)}): ").strip()
+            if not choice:
+                return None
+            
+            choice_idx = int(choice) - 1
+            if 0 <= choice_idx < len(printers):
+                selected_printer = printers[choice_idx]
+                print(f"Selected printer: {selected_printer}")
+                return selected_printer
+            else:
+                print(f"Please enter a number between 1 and {len(printers)}")
+        except ValueError:
+            print("Please enter a valid number")
+        except KeyboardInterrupt:
+            print("\nCancelled")
+            return None
+
+def confirm_print_first_card():
+    """Ask user if they want to print the first card."""
+    while True:
+        response = input("\nPrint the first card? (y/n): ").strip().lower()
+        if response in ['y', 'yes']:
+            return True
+        elif response in ['n', 'no']:
+            return False
+        else:
+            print("Please enter 'y' for yes or 'n' for no")
+
+def confirm_print_remaining_cards():
+    """Ask user if they want to print the remaining cards."""
+    while True:
+        response = input("\nPrint the remaining cards? (y/n): ").strip().lower()
+        if response in ['y', 'yes']:
+            return True
+        elif response in ['n', 'no']:
+            return False
+        else:
+            print("Please enter 'y' for yes or 'n' for no")
+
 def crop_and_center_image(image_path, output_path, crop_percentage_top=0.04, crop_percentage_bottom=0.03, crop_percentage_left_right=None, canvas_size=(2.5 * 300, 3.5 * 300), dpi=300):
     """
     Crop the image, scale it, and center it on a rectangular canvas.
@@ -496,7 +557,13 @@ def download_missing_images_from_xml(xml_file, images_dir, delay=0.5):
         traceback.print_exc()
         return []
 
-def main(deck_list_path=None, xml_file_path=None, images_dir_path=None):
+def main(deck_list_path=None, xml_file_path=None, images_dir_path=None, args=None):
+    # Handle backwards compatibility when args is None
+    if args is None:
+        class DefaultArgs:
+            no_print = False
+        args = DefaultArgs()
+    
     # Base directories (use MTG_DIR env var to override)
     # By default this will look for an `mtg` folder next to this script.
     script_dir = Path(__file__).resolve().parent
@@ -560,7 +627,14 @@ def main(deck_list_path=None, xml_file_path=None, images_dir_path=None):
         xml_file = mtg_dir / "cards.xml"
         print(f"Using default XML file: {xml_file}")
     
-    printer_name = os.environ.get("PRINTER_NAME", "tanker")
+    # Select printer interactively unless --no-print is specified
+    if '--no-print' not in sys.argv and not (hasattr(args, 'no_print') and args.no_print):
+        printer_name = select_printer()
+        if not printer_name:
+            print("No printer selected, exiting...")
+            return
+    else:
+        printer_name = os.environ.get("PRINTER_NAME", "tanker")
 
     # Ensure the output and images folders exist
     images_dir.mkdir(parents=True, exist_ok=True)
@@ -601,6 +675,9 @@ def main(deck_list_path=None, xml_file_path=None, images_dir_path=None):
         root = tree.getroot()
         
         # Process card sections (fronts and backs)
+        first_card_printed = False
+        print_remaining = False
+        
         for section_name in ["fronts", "backs"]:
             section = root.find(section_name)
             if not section:
@@ -657,12 +734,31 @@ def main(deck_list_path=None, xml_file_path=None, images_dir_path=None):
                         output_image_path = output_folder / output_filename
                         crop_and_center_image(str(found_image_path), str(output_image_path))
 
-                        # Only print if not in no-print mode
-                        if '--no-print' not in sys.argv and not args.no_print:
+                        # Handle printing confirmation logic
+                        should_print = False
+                        if '--no-print' not in sys.argv and not (hasattr(args, 'no_print') and args.no_print):
+                            if not first_card_printed:
+                                # First card - ask for confirmation
+                                if confirm_print_first_card():
+                                    should_print = True
+                                    first_card_printed = True
+                                    # After printing first card, ask about remaining cards
+                                    print_remaining = confirm_print_remaining_cards()
+                                else:
+                                    # User declined to print first card, skip all printing
+                                    print("Printing cancelled by user")
+                                    return
+                            else:
+                                # Not the first card - use the previous decision
+                                should_print = print_remaining
+                        
+                        if should_print:
                             # Send the cropped image to the printer
                             send_image_to_printer(str(output_image_path), printer_name)
-                        else:
+                        elif '--no-print' in sys.argv or (hasattr(args, 'no_print') and args.no_print):
                             print(f"Skipping print for: {output_image_path} (--no-print specified)")
+                        else:
+                            print(f"Skipping print for: {output_image_path} (user choice)")
                 else:
                     print(f"Image not found for: {card_name}")
                     # Try to find the image in the base images directory
@@ -682,12 +778,31 @@ def main(deck_list_path=None, xml_file_path=None, images_dir_path=None):
                             output_image_path = output_folder / output_filename
                             crop_and_center_image(str(target_path), str(output_image_path))
                             
-                            # Only print if not in no-print mode
-                            if '--no-print' not in sys.argv and not args.no_print:
+                            # Handle printing confirmation logic
+                            should_print = False
+                            if '--no-print' not in sys.argv and not (hasattr(args, 'no_print') and args.no_print):
+                                if not first_card_printed:
+                                    # First card - ask for confirmation
+                                    if confirm_print_first_card():
+                                        should_print = True
+                                        first_card_printed = True
+                                        # After printing first card, ask about remaining cards
+                                        print_remaining = confirm_print_remaining_cards()
+                                    else:
+                                        # User declined to print first card, skip all printing
+                                        print("Printing cancelled by user")
+                                        return
+                                else:
+                                    # Not the first card - use the previous decision
+                                    should_print = print_remaining
+                            
+                            if should_print:
                                 # Send the cropped image to the printer
                                 send_image_to_printer(str(output_image_path), printer_name)
-                            else:
+                            elif '--no-print' in sys.argv or (hasattr(args, 'no_print') and args.no_print):
                                 print(f"Skipping print for: {output_image_path} (--no-print specified)")
+                            else:
+                                print(f"Skipping print for: {output_image_path} (user choice)")
                     else:
                         print(f"Image not found in any location, consider downloading it.")
 
@@ -717,7 +832,12 @@ if __name__ == "__main__":
     parser.epilog = '''
 Environment Variables:
   MTG_DIR         Base directory for images and output (default: ./mtg)
-  PRINTER_NAME    Name of the printer to use (default: tanker)
+  PRINTER_NAME    Name of the printer to use (only used with --no-print flag)
+
+Interactive Features:
+  - Select printer from available system printers
+  - Confirmation prompt before printing first card
+  - Option to print remaining cards after first card
 
 Custom Directories:
   Use -i/--images-dir to specify a custom images directory
@@ -748,4 +868,4 @@ XML Format:
     if not (args.deck_list_path or args.xml_file_path) and len(sys.argv) > 1 and not sys.argv[1].startswith('-'):
         args.deck_list_path = sys.argv[1]
     
-    main(deck_list_path=args.deck_list_path, xml_file_path=args.xml_file_path, images_dir_path=args.images_dir_path)
+    main(deck_list_path=args.deck_list_path, xml_file_path=args.xml_file_path, images_dir_path=args.images_dir_path, args=args)

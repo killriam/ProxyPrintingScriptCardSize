@@ -1,10 +1,55 @@
 # Scribus SLA Printing Methods
 
-This document explains the different methods available for opening and printing Scribus SLA files, including both command-line and library-based approaches.
+This document explains the different methods available for opening and printing Scribus SLA files, with **Native Scribus Printing** now being the recommended approach for best layout preservation.
 
 ## Available Print Methods
 
-### 1. Library Method (Recommended) - `--print-method library`
+### 1. Native Scribus Printing (RECOMMENDED) - `--print-method scribus`
+
+**Uses Scribus's native Python scripting API for direct printing**
+
+- **Advantages:**
+  - Perfect layout preservation - uses Scribus's exact rendering engine
+  - No PDF conversion artifacts or scaling issues
+  - Direct printer communication with proper color management
+  - Eliminates cropping issues from PDF export/import process
+  - Uses Scribus's optimized print engine and settings
+
+- **How it works:**
+  1. Creates Python script with `scribus.setPrinter()` and `scribus.printDocument()` commands
+  2. Executes script via Scribus command line with `-g -ns -py` flags
+  3. Scribus loads SLA file and prints directly to specified printer
+  4. No intermediate PDF generation or conversion
+
+- **Usage:**
+  ```bash
+  # Print to specific printer
+  python create_scribus_files.py your_deck.xml --print --print-method scribus --printer "Your Printer"
+  
+  # Save printer for future use
+  python create_scribus_files.py your_deck.xml --printer "Your Printer" --save-printer
+  
+  # Print with saved printer
+  python create_scribus_files.py your_deck.xml --print --print-method scribus
+  
+  # Test with PDF printer
+  python create_scribus_files.py your_deck.xml --print --print-method scribus --printer "Microsoft Print to PDF"
+  ```
+
+- **Requirements:**
+  - Scribus 1.6+ installed and accessible in PATH
+  - Target printer configured in system
+
+- **Testing:**
+  ```bash
+  # Verify setup and test printing
+  python setup_scribus_printing.py
+  
+  # Test specific file and printer
+  python test_scribus_printer_config.py --print-file "file.sla" --printer "Your Printer"
+  ```
+
+### 2. Library Method - `--print-method library`
 
 **Pure Python libraries approach - No Scribus command line required**
 

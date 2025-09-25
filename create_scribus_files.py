@@ -277,7 +277,51 @@ def create_scribus_files_from_xml(
         print(f"\nProcessing complete. Created {cards_processed} Scribus files in {output_path}")
         
         # If print_files flag is set or ask the user interactively
-        if print_files or (input("\nPrint all Scribus files now? (y/N): ").lower().strip() == 'y'):
+        should_print = print_files
+        if not should_print:
+            # Two-step confirmation: test print first, then ask for the rest
+            print(f"\nCreated {len(created_files)} Scribus files.")
+            
+            # Step 1: Ask to print one file as test
+            test_response = input("Print one file first as a test? (y/N): ").lower().strip()
+            if test_response == 'y':
+                if created_files:
+                    test_file = created_files[0]
+                    print(f"\nTesting with: {test_file.name}")
+                    
+                    # Print just the first file as test
+                    if print_method == 'manual':
+                        open_scribus_files_manually([test_file], printer_name=printer_name)
+                    elif print_method == 'library':
+                        success = print_scribus_files_via_library([test_file], printer_name=printer_name, copies=copies)
+                        if not success:
+                            print("Library method failed for test print.")
+                    elif print_method == 'pdf':
+                        success = print_scribus_files_via_pdf([test_file], printer_name=printer_name, copies=copies, headless=headless)
+                        if not success:
+                            print("PDF method failed for test print.")
+                    else:
+                        success = print_scribus_files([test_file], printer_name=printer_name, copies=copies, headless=headless)
+                        if not success:
+                            print("Scribus method failed for test print.")
+                    
+                    # Step 2: Ask if they want to continue with the rest
+                    if len(created_files) > 1:
+                        continue_response = input(f"\nTest print completed. Print the remaining {len(created_files)-1} files? (y/N): ").lower().strip()
+                        if continue_response == 'y':
+                            should_print = True
+                            # Remove the test file from the list since it was already printed
+                            created_files = created_files[1:]
+                        else:
+                            print("Printing cancelled. Test file was printed, but remaining files will not be printed.")
+                    else:
+                        print("Test print completed. Only one file was created, so printing is done.")
+                else:
+                    print("No files to print.")
+            else:
+                print("Printing cancelled.")
+        
+        if should_print and created_files:
             if print_method == 'manual':
                 open_scribus_files_manually(
                     created_files,
@@ -393,12 +437,10 @@ def print_scribus_files_via_library(sla_files, printer_name=None, copies=1):
         return False
 
 def print_scribus_files(sla_files, printer_name=None, copies=1, headless=True):
-    """Batch print Scribus .sla files using a simplified approach.
+    """Batch print Scribus .sla files using native Scribus command-line printing.
     
-    We'll try multiple methods in order of reliability:
-    1. Scribus with Python helper (current method)
-    2. Scribus GUI mode with print dialog
-    3. Set Windows default printer and use Scribus print verb
+    This method uses Scribus's native printing capabilities, which preserve all
+    layout, scaling, and positioning exactly as designed in the SLA template.
     """
     try:
         if not sla_files:
@@ -406,18 +448,19 @@ def print_scribus_files(sla_files, printer_name=None, copies=1, headless=True):
             return False
 
         total = len(sla_files)
-        print(f"Preparing to print {total} Scribus file(s)...")
+        print(f"Using native Scribus printing for {total} file(s)...")
 
+        # Check if Scribus is available
         scribus_cmd = os.environ.get("SCRIBUS_CMD", "scribus")
         try:
-            result = subprocess.run([scribus_cmd, "--version"], capture_output=True, text=True, check=False)
+            result = subprocess.run([scribus_cmd, "--version"], capture_output=True, text=True, check=False, timeout=10)
             ver = result.stdout.strip() if result.stdout else "(version unknown)"
             print(f"Using Scribus command: {scribus_cmd} {ver}")
-        except FileNotFoundError:
-            print("ERROR: Scribus executable not found. Set SCRIBUS_CMD env var or add to PATH.")
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            print("ERROR: Scribus executable not found or not responding. Set SCRIBUS_CMD env var or add to PATH.")
             return False
 
-        # Resolve printer name using same logic as before
+        # Resolve printer name
         target_printer = None
         if printer_name:
             target_printer = printer_name
@@ -429,55 +472,116 @@ def print_scribus_files(sla_files, printer_name=None, copies=1, headless=True):
             if saved:
                 target_printer = saved
             else:
-                # No saved printer, prompt user to select from Windows printers
+                # No saved printer, prompt user to select
                 chosen = choose_printer_interactive()
                 if chosen:
                     target_printer = chosen
-                    # merge with existing settings
+                    # Save the selection
                     s = load_settings()
                     s['printer_name'] = chosen
                     save_settings(s)
 
+        if not target_printer:
+            print("ERROR: No printer specified.")
+            return False
+            
         print(f"Target printer: {target_printer}")
 
-        # Method 1: Try Windows print command (simplest)
-        failures = 0
-        for idx, sla_file in enumerate(sla_files, 1):
-            print(f"[{idx}/{total}] Printing: {sla_file.name}")
-            
-            for attempt, method in enumerate([
-                # Method 1: Direct print command
-                lambda f: subprocess.run(['print', f'/D:{target_printer}', str(f)], capture_output=True, text=True, timeout=30),
-                # Method 2: PowerShell Out-Printer on the file content
-                lambda f: subprocess.run(['powershell', '-Command', f'Get-Content "{f}" -Raw | Out-Printer -Name "{target_printer}"'], capture_output=True, text=True, timeout=30),
-                # Method 3: Open with default application
-                lambda f: subprocess.run(['cmd', '/c', 'start', '/min', str(f)], capture_output=True, text=True, timeout=15),
-            ], 1):
-                try:
-                    result = method(sla_file)
-                    if result.returncode == 0:
-                        print(f"  Success via method {attempt}")
-                        break
-                    elif attempt == 3:
-                        print(f"  All methods failed for {sla_file.name}")
-                        failures += 1
-                except Exception as e:
-                    if attempt == 3:
-                        print(f"  Error printing {sla_file.name}: {e}")
-                        failures += 1
+        # Create Scribus Python print script
+        script_content = f'''
+import scribus
+import sys
+import traceback
 
-        if failures > 0:
-            print(f"Some files failed to print: {failures}/{total}")
-            print("Alternative: Open the SLA files manually in Scribus and print them.")
-            return False
-        else:
-            print("All files sent for printing.")
-            return True
+try:
+    if not scribus.haveDoc():
+        print("ERROR: No document loaded", file=sys.stderr)
+        sys.exit(1)
+
+    # Get available printers
+    printers = scribus.getPrinterNames()
+    if not printers:
+        print("ERROR: No printers available", file=sys.stderr)
+        sys.exit(1)
+
+    # Check if target printer is available
+    target_printer = "{target_printer}"
+    if target_printer not in printers:
+        print(f"WARNING: Target printer '{{target_printer}}' not found. Available: {{printers}}", file=sys.stderr)
+        # Use first available printer as fallback
+        target_printer = printers[0]
+        print(f"Using fallback printer: {{target_printer}}", file=sys.stderr)
+
+    # Set the printer
+    scribus.setPrinter(target_printer)
+    
+    # Set print options for better quality
+    scribus.setPrintOptions({copies}, 1, 1, 0, 0, 1)  # copies, from_page, to_page, use_alt_print_dialog, output_to_file, use_color
+    
+    # Print the document
+    scribus.printDocument()
+    print(f"SUCCESS: Document sent to printer {{target_printer}}", file=sys.stderr)
+
+except Exception as e:
+    print(f"ERROR during printing: {{e}}", file=sys.stderr)
+    traceback.print_exc(file=sys.stderr)
+    sys.exit(1)
+'''
+
+        # Write script to temporary file
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
+            f.write(script_content)
+            script_path = f.name
+
+        try:
+            # Print each file
+            failures = 0
+            for idx, sla_file in enumerate(sla_files, 1):
+                print(f"[{idx}/{total}] {sla_file.name}")
+                
+                # Build command
+                cmd = [scribus_cmd]
+                if headless:
+                    cmd.extend(["-g", "-ns"])  # No GUI, no splash
+                cmd.extend(["-py", script_path, str(sla_file)])
+
+                # Execute
+                try:
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                    
+                    if result.returncode == 0:
+                        print(f"✓ Printed via Scribus")
+                    else:
+                        print(f"✗ Failed - Return code: {result.returncode}")
+                        if result.stderr:
+                            print(f"  Error: {result.stderr.strip()}")
+                        failures += 1
+                        
+                except subprocess.TimeoutExpired:
+                    print(f"✗ Failed - Timeout")
+                    failures += 1
+                except Exception as e:
+                    print(f"✗ Failed - {e}")
+                    failures += 1
+
+            # Summary
+            if failures == 0:
+                print(f"✓ All {total} files printed successfully via Scribus!")
+                return True
+            else:
+                print(f"✗ {failures}/{total} files failed to print")
+                return False
+
+        finally:
+            # Clean up temporary script
+            try:
+                os.unlink(script_path)
+            except:
+                pass
 
     except Exception as print_error:
-        import traceback
-        print(f"Error during printing: {print_error}")
-        traceback.print_exc()
+        print(f"Error during Scribus printing: {print_error}")
         return False
 
 def print_scribus_files_via_pdf(sla_files, printer_name=None, copies=1, headless=True):

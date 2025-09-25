@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<order>
+    <details>
+        <quantity>1</quantity>
+        <bracket>108</bracket>
+        <stock>(S33) Superior Smooth</stock>
+        <foil>false</foil>
+    </details>
+    <fronts>
+        <card>
+            <id>1Ji8G1nvAsiATvifYoUoD_HkYz9AA9vxF</id>
+            <slots>0</slots>
+            <name>Reality Strobe.png</name>
+            <query>reality strobe</query>
+        </card>
+    </fronts>
+</order>

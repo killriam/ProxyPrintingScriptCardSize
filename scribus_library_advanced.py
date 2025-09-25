@@ -13,6 +13,7 @@ try:
     from reportlab.pdfgen import canvas
     from reportlab.lib.pagesizes import letter, A4
     from reportlab.lib.units import mm, inch
+    from reportlab.lib import colors
     REPORTLAB_AVAILABLE = True
 except ImportError:
     REPORTLAB_AVAILABLE = False
@@ -69,12 +70,17 @@ class ScribusLibraryProcessor:
             tree = ET.parse(sla_path)
             root = tree.getroot()
             
-            # Extract document properties
+            # Find the DOCUMENT element which contains the page dimensions
+            document = root.find('DOCUMENT')
+            if document is None:
+                raise ValueError("No DOCUMENT element found in SLA file")
+            
+            # Extract document properties from the DOCUMENT element
             doc_info = {
-                'page_width': float(root.get('PAGEWIDTH', '595.276')),  # A4 width in points
-                'page_height': float(root.get('PAGEHEIGHT', '841.89')), # A4 height in points
-                'page_x': float(root.get('PAGEXPOS', '0')),
-                'page_y': float(root.get('PAGEYPOS', '0')),
+                'page_width': float(document.get('PAGEWIDTH', '595.276')),
+                'page_height': float(document.get('PAGEHEIGHT', '841.89')),
+                'page_x': float(document.get('PAGEXPOS', '0')),
+                'page_y': float(document.get('PAGEYPOS', '0')),
             }
             
             # Extract page objects
@@ -126,28 +132,21 @@ class ScribusLibraryProcessor:
         page_objects = sla_data['objects']
         
         try:
-            # Use standard card dimensions: 3.5" height × 2.5" width
-            # Convert inches to points (1 inch = 72 points)
-            CARD_WIDTH_POINTS = 2.5 * 72   # 180 points
-            CARD_HEIGHT_POINTS = 3.5 * 72  # 252 points
+            # Use original SLA document dimensions to preserve page layout
+            page_width = doc_info['page_width']
+            page_height = doc_info['page_height']
             
-            # Create PDF canvas with card dimensions
+            print(f"Using SLA page dimensions: {page_width:.1f} x {page_height:.1f} points")
+            
+            # Create PDF canvas with original SLA dimensions
             c = canvas.Canvas(
                 str(pdf_path), 
-                pagesize=(CARD_WIDTH_POINTS, CARD_HEIGHT_POINTS)
+                pagesize=(page_width, page_height)
             )
             
-            # Use card dimensions instead of original document dimensions
-            card_doc_info = {
-                'page_width': CARD_WIDTH_POINTS,
-                'page_height': CARD_HEIGHT_POINTS,
-                'page_x': 0,
-                'page_y': 0
-            }
-            
-            # Process each object with scaling to fit card dimensions
+            # Process each object using original SLA dimensions (no scaling)
             for obj in page_objects:
-                self._draw_object_to_pdf(c, obj, card_doc_info, sla_path, doc_info)
+                self._draw_object_to_pdf(c, obj, doc_info, sla_path, doc_info)
             
             # Save PDF
             c.save()
@@ -158,35 +157,19 @@ class ScribusLibraryProcessor:
             print(f"Error creating PDF: {e}")
             return None
     
-    def _draw_object_to_pdf(self, canvas_obj, obj_info, card_doc_info, sla_path, original_doc_info=None):
-        """Draw a single object to the PDF canvas with scaling to fit card dimensions."""
+    def _draw_object_to_pdf(self, canvas_obj, obj_info, doc_info, sla_path, original_doc_info=None):
+        """Draw a single object to the PDF canvas using original SLA coordinates."""
         obj_type = obj_info['type']
         
-        # Calculate scaling factors if original document info is provided
-        if original_doc_info:
-            scale_x = card_doc_info['page_width'] / original_doc_info['page_width']
-            scale_y = card_doc_info['page_height'] / original_doc_info['page_height']
-            
-            # Use the same scale for both dimensions to maintain aspect ratio
-            scale = min(scale_x, scale_y)
-            
-            # Scale and center the object
-            scaled_width = obj_info['width'] * scale
-            scaled_height = obj_info['height'] * scale
-            scaled_x = (obj_info['x'] * scale) + (card_doc_info['page_width'] - original_doc_info['page_width'] * scale) / 2
-            scaled_y = (obj_info['y'] * scale) + (card_doc_info['page_height'] - original_doc_info['page_height'] * scale) / 2
-        else:
-            # No scaling, use original dimensions
-            scaled_x = obj_info['x']
-            scaled_y = obj_info['y']
-            scaled_width = obj_info['width']
-            scaled_height = obj_info['height']
+        # Use original SLA coordinates without any scaling
+        x = obj_info['x']
+        y = obj_info['y'] 
+        width = obj_info['width']
+        height = obj_info['height']
         
         # Convert Y coordinate (PDF coordinate system has origin at bottom-left)
-        y = card_doc_info['page_height'] - scaled_y - scaled_height
-        x = scaled_x
-        width = scaled_width
-        height = scaled_height
+        # In SLA, Y=0 is at top, in PDF Y=0 is at bottom
+        pdf_y = doc_info['page_height'] - y - height
         
         if obj_type == '2':  # Image object
             image_file = obj_info['image_file']
@@ -200,29 +183,62 @@ class ScribusLibraryProcessor:
                 
                 if os.path.exists(image_file):
                     try:
-                        canvas_obj.drawImage(image_file, x, y, width, height)
+                        # Get image dimensions to calculate proper scaling
+                        with Image.open(image_file) as img:
+                            img_width, img_height = img.size
+                        
+                        # For Magic cards, we want to fill more of the card area
+                        # Use larger dimensions that better fill the 252x252 card
+                        margin = 10  # Small margin from edges
+                        card_width = doc_info['page_width'] - 2 * margin
+                        card_height = doc_info['page_height'] - 2 * margin
+                        card_x = margin
+                        card_y = margin
+                        
+                        # Calculate aspect ratios
+                        img_aspect = img_width / img_height
+                        card_aspect = card_width / card_height
+                        
+                        # Calculate scaled dimensions that fit within the card while preserving aspect ratio
+                        if img_aspect > card_aspect:
+                            # Image is wider - fit to width, center vertically
+                            scaled_width = card_width
+                            scaled_height = card_width / img_aspect
+                            img_x = card_x
+                            img_y = (doc_info['page_height'] - scaled_height) / 2
+                        else:
+                            # Image is taller - fit to height, center horizontally  
+                            scaled_width = card_height * img_aspect
+                            scaled_height = card_height
+                            img_x = (doc_info['page_width'] - scaled_width) / 2
+                            img_y = (doc_info['page_height'] - scaled_height) / 2
+                        
+                        # Convert to PDF coordinate system (Y origin at bottom)
+                        pdf_y = doc_info['page_height'] - img_y - scaled_height
+                        
+                        canvas_obj.drawImage(image_file, img_x, pdf_y, scaled_width, scaled_height)
                         return
                     except Exception as e:
                         print(f"Warning: Could not draw image {image_file}: {e}")
                 
                 # Draw placeholder rectangle if image failed
-                canvas_obj.setStrokeColor('red')
-                canvas_obj.setFillColor(0.9, 0.9, 0.9)  # Light gray using RGB values
-                canvas_obj.rect(x, y, width, height, fill=1)
-                canvas_obj.setFillColor('red')
-                canvas_obj.drawCentredString(x + width/2, y + height/2, "IMAGE")
+                canvas_obj.setStrokeColor(colors.red)
+                canvas_obj.setFillColor(colors.lightgrey)
+                canvas_obj.rect(x, pdf_y, width, height, fill=1)
+                canvas_obj.setFillColor(colors.red)
+                canvas_obj.drawCentredString(x + width/2, pdf_y + height/2, "IMAGE")
         
         elif obj_type == '4':  # Text object
             # Draw text placeholder
-            canvas_obj.setStrokeColor('blue')
-            canvas_obj.rect(x, y, width, height)
-            canvas_obj.setFillColor('blue')
-            canvas_obj.drawCentredString(x + width/2, y + height/2, "TEXT")
+            canvas_obj.setStrokeColor(colors.blue)
+            canvas_obj.rect(x, pdf_y, width, height)
+            canvas_obj.setFillColor(colors.blue)
+            canvas_obj.drawCentredString(x + width/2, pdf_y + height/2, "TEXT")
         
         else:
             # Draw generic object
-            canvas_obj.setStrokeColor('gray')
-            canvas_obj.rect(x, y, width, height)
+            canvas_obj.setStrokeColor(colors.gray)
+            canvas_obj.rect(x, pdf_y, width, height)
     
     def print_pdf_file(self, pdf_path, printer_name=None, copies=1):
         """Print PDF file using Windows printing."""
