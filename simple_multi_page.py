@@ -21,7 +21,7 @@ def main():
     # Set up argument parser
     parser = argparse.ArgumentParser(description="Create a multi-page Scribus document from an XML file")
     parser.add_argument("xml_file", help="Path to XML file with card information")
-    parser.add_argument("--template", "-t", default="scribus_template_proxytest1.sla", help="Path to template SLA file")
+    parser.add_argument("--template", "-t", default="scribus_template_proxy.sla", help="Path to template SLA file")
     parser.add_argument("--output-dir", "-o", help="Output directory (default: ready2Print/[deck_name])")
     parser.add_argument("--base-dir", "-b", help="Base directory for the project")
     parser.add_argument("--create-cardback", action="store_true", help="Create cardback SLA file")
@@ -453,42 +453,183 @@ def update_image_paths_in_sla(sla_file_path, card_image_paths):
             content = f.read()
         
         print(f"Debug: SLA file content length: {len(content)} characters")
-        
-        # Find all the image references
-        image_pattern = r'<PAGEOBJECT.*?OwnPage="(\d+)".*?PFILE="([^"]*)"'
-        matches = re.findall(image_pattern, content)
-        print(f"Debug: Found {len(matches)} image references in SLA file")
-        
-        # Function to replace image paths in the matched groups
-        def replace_image(match):
-            page_num = int(match.group(1))  # OwnPage is now group 1
-            current_path = match.group(2)  # PFILE is now group 2
-            
-            # Only replace if we have a path for this page and it's different
-            if 0 <= page_num < len(card_image_paths) and card_image_paths[page_num]:
+
+        # Find all PAGEOBJECT self-closing blocks
+        matches = list(re.finditer(r'<PAGEOBJECT\b[^>]*?/>', content, re.DOTALL))
+        print(f"Debug: Found {len(matches)} PAGEOBJECT blocks in SLA")
+
+        # Collect image-like blocks and keep the first image block as a template
+        image_blocks = []  # list of (match_index, start, end, block, attrs)
+        first_image_block = None
+        page_map = {}
+
+        for idx, m in enumerate(matches):
+            block = m.group(0)
+            attrs = dict(re.findall(r'(\w+)="([^"]*)"', block))
+
+            # determine page index if present
+            page_num = None
+            if 'Pagenumber' in attrs:
+                try:
+                    page_num = int(attrs['Pagenumber'])
+                except ValueError:
+                    page_num = None
+            elif 'OwnPage' in attrs:
+                try:
+                    page_num = int(attrs['OwnPage'])
+                except ValueError:
+                    page_num = None
+
+            is_image = 'PFILE' in attrs or attrs.get('PTYPE') == '2' or attrs.get('PICART') == '1'
+
+            if is_image:
+                image_blocks.append((idx, m.start(), m.end(), block, attrs, page_num))
+                if first_image_block is None:
+                    first_image_block = (block, attrs)
+                if page_num is not None:
+                    page_map.setdefault(page_num, []).append((idx, m.start(), m.end(), block, attrs))
+
+        total_pages = len(card_image_paths)
+        print(f"Debug: Collected {len(image_blocks)} image-like PAGEOBJECT blocks; mapped pages: {sorted(page_map.keys())}")
+
+        # Decide strategy: prefer explicit page mapping when it looks meaningful
+        meaningful_page_nums = {p for (_, _, _, _, _, p) in image_blocks if p is not None}
+        use_mapping = False
+        if len(meaningful_page_nums) >= max(2, min(total_pages, len(image_blocks) // 2)):
+            # enough different page numbers to trust mapping
+            use_mapping = True
+
+        replacements = {}  # match_index -> new_block
+        changes = False
+
+        if use_mapping:
+            # Use existing Pagenumber/OwnPage attributes to assign images
+            for (m_idx, start, end, block, attrs, page_num) in image_blocks:
+                if page_num is None or not (0 <= page_num < total_pages):
+                    continue
                 new_path = card_image_paths[page_num]
-                if current_path != new_path:
-                    print(f"Debug: Page {page_num}: Replacing '{current_path}' with '{new_path}'")
-                    # Replace the path but keep everything else unchanged
-                    return match.group(0).replace(f'PFILE="{current_path}"', f'PFILE="{new_path}"')
+                if not new_path:
+                    continue
+                new_block = block
+                pfile_m = re.search(r'PFILE="([^"]*)"', new_block)
+                if pfile_m:
+                    cur = pfile_m.group(1)
+                    if cur != new_path:
+                        new_block = new_block.replace(f'PFILE="{cur}"', f'PFILE="{new_path}"', 1)
+                        changes = True
+                        print(f"Debug: Mapped Page {page_num}: Replaced existing PFILE '{cur}' -> '{new_path}' (match {m_idx})")
                 else:
-                    print(f"Debug: Page {page_num}: Path already correct: '{current_path}'")
+                    # insert PFILE into block
+                    insert_text = f' PFILE="{new_path}"'
+                    insert_match = re.search(r"\s(IRENDER|EMBEDDED|path)=", new_block)
+                    if insert_match:
+                        idx_ins = insert_match.start(1)
+                        new_block = new_block[:idx_ins] + insert_text + new_block[idx_ins:]
+                    else:
+                        if new_block.endswith('/>'):
+                            new_block = new_block[:-2] + insert_text + '/>'
+                        else:
+                            new_block = new_block[:-1] + insert_text + '>'
+                    changes = True
+                    print(f"Debug: Mapped Page {page_num}: Inserted PFILE='{new_path}' into image block (match {m_idx})")
+
+                replacements[m_idx] = new_block
+
+        else:
+            # Fallback: assign image blocks sequentially (first image block -> page 0, etc.)
+            for assign_idx in range(min(total_pages, len(image_blocks))):
+                m_idx, start, end, block, attrs, page_num = image_blocks[assign_idx]
+                new_path = card_image_paths[assign_idx]
+                if not new_path:
+                    continue
+                new_block = block
+                pfile_m = re.search(r'PFILE="([^"]*)"', new_block)
+                if pfile_m:
+                    cur = pfile_m.group(1)
+                    if cur != new_path:
+                        new_block = new_block.replace(f'PFILE="{cur}"', f'PFILE="{new_path}"', 1)
+                        changes = True
+                        print(f"Debug: Sequential assign page {assign_idx}: Replaced existing PFILE '{cur}' -> '{new_path}' (match {m_idx})")
+                else:
+                    insert_text = f' PFILE="{new_path}"'
+                    insert_match = re.search(r"\s(IRENDER|EMBEDDED|path)=", new_block)
+                    if insert_match:
+                        idx_ins = insert_match.start(1)
+                        new_block = new_block[:idx_ins] + insert_text + new_block[idx_ins:]
+                    else:
+                        if new_block.endswith('/>'):
+                            new_block = new_block[:-2] + insert_text + '/>'
+                        else:
+                            new_block = new_block[:-1] + insert_text + '>'
+                    changes = True
+                    print(f"Debug: Sequential assign page {assign_idx}: Inserted PFILE='{new_path}' into image block (match {m_idx})")
+
+                replacements[m_idx] = new_block
+
+            # If there are fewer image blocks than pages, clone the template image block for remaining pages
+            if first_image_block is not None:
+                template_block, template_attrs = first_image_block
+                for idx_page in range(len(image_blocks), total_pages):
+                    new_path = card_image_paths[idx_page]
+                    if not new_path:
+                        continue
+                    cloned = template_block
+                    if 'Pagenumber' in template_attrs:
+                        cloned = re.sub(r'Pagenumber="\d+"', f'Pagenumber="{idx_page}"', cloned)
+                    elif 'OwnPage' in template_attrs:
+                        cloned = re.sub(r'OwnPage="\d+"', f'OwnPage="{idx_page}"', cloned)
+                    else:
+                        if cloned.endswith('/>'):
+                            cloned = cloned[:-2] + f' OwnPage="{idx_page}"/>'
+                        else:
+                            cloned = cloned[:-1] + f' OwnPage="{idx_page}">'
+
+                    if 'PFILE' in template_attrs:
+                        cloned = re.sub(r'PFILE="[^"]*"', f'PFILE="{new_path}"', cloned, count=1)
+                    else:
+                        insert_match = re.search(r"\s(IRENDER|EMBEDDED|path)=", cloned)
+                        insert_text = f' PFILE="{new_path}"'
+                        if insert_match:
+                            idx2 = insert_match.start(1)
+                            cloned = cloned[:idx2] + insert_text + cloned[idx2:]
+                        else:
+                            if cloned.endswith('/>'):
+                                cloned = cloned[:-2] + insert_text + '/>'
+                            else:
+                                cloned = cloned[:-1] + insert_text + '>'
+
+                    cloned = re.sub(r'ItemID="\d+"', f'ItemID="{int(time.time()*1000) % 1000000000}"', cloned, count=1)
+                    # We'll append cloned blocks at the end of the document
+                    # store under a synthetic match index beyond existing ones to insert later
+                    replacements[f'clone_{idx_page}'] = cloned
+                    changes = True
+                    print(f"Debug: Cloned template for missing page {idx_page} and set PFILE='{new_path}'")
+
+        # Rebuild file content using replacements
+        out_parts = []
+        last = 0
+        for i, m in enumerate(matches):
+            start, end = m.start(), m.end()
+            out_parts.append(content[last:start])
+            if i in replacements:
+                out_parts.append(replacements[i])
             else:
-                print(f"Debug: Page {page_num}: No replacement needed (current: '{current_path}')")
-            
-            return match.group(0)  # No change
-        
-        # Replace all image paths
-        new_content = re.sub(image_pattern, replace_image, content)
-        
-        # Count actual changes
-        changes_made = content != new_content
-        print(f"Debug: Changes made to SLA file: {changes_made}")
-        
-        # Write the updated content back to the file
+                out_parts.append(m.group(0))
+            last = end
+
+        out_parts.append(content[last:])
+        new_content = ''.join(out_parts)
+
+        # Insert any cloned blocks before </DOCUMENT>
+        for key, cloned in list(replacements.items()):
+            if isinstance(key, str) and key.startswith('clone_'):
+                new_content = new_content.replace('</DOCUMENT>', f'{cloned}\n    </DOCUMENT>')
+
+        print(f"Debug: Changes made to SLA file: {changes}")
+
         with open(sla_file_path, 'w', encoding='utf-8') as f:
             f.write(new_content)
-        
+
         print(f"Debug: Updated SLA file written successfully")
         return True
     

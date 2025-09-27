@@ -7,7 +7,7 @@ This document describes the `simple_multi_page.py` helper script. The script rea
 Location
 
 - Script: `simple_multi_page.py` (this folder)
-- Template (default): `scribus_template_proxytest1.sla`
+-- Template (default): `scribus_template_proxy.sla`
 - Helper used to duplicate pages in Scribus: `copy_slaTemplate.py`
 - Output directory (by default): `ready2Print/<deck_name>/`
 
@@ -58,7 +58,7 @@ python simple_multi_page.py 'Cards xml\Exilent Timing.xml'
 Options
 
 - `xml_file` (positional): Path to the deck XML file. If a relative path is given, it's relative to the script `--base-dir` (or the script folder by default).
-- `--template`, `-t`: SLA template path. Default: `scribus_template_proxytest1.sla`.
+-- `--template`, `-t`: SLA template path. Default: `scribus_template_proxy.sla`.
 - `--output-dir`, `-o`: Custom name under `ready2Print/` to write output. Default: `ready2Print/<deck_name>/`.
 - `--base-dir`, `-b`: Base directory for resolving relative paths (defaults to the script directory).
 - `--create-cardback`: Also create a single-page cardback SLA next to the multi front SLA.

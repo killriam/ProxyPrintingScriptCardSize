@@ -30,13 +30,24 @@ try:
             scribus.gotoPage(scribus.pageCount())
 
         # copy + paste objects
-        scribus.gotoPage(1)
+        # For robustness: copy each object from page 1 and paste it immediately into the
+        # destination page. Copying all objects first and then pasting repeatedly can
+        # leave only the last-copied object in the clipboard and result in missing
+        # or duplicated objects on duplicated pages.
+        dest_page = insert_at if INSERT_AFTER_1 else scribus.pageCount()
         for name in items_on_p1:
+            # ensure we're copying the object from the original page
+            scribus.gotoPage(1)
+            try:
+                scribus.deselectAll()
+            except Exception:
+                # some versions of the API may not have deselectAll; ignore if not present
+                pass
             scribus.selectObject(name)
             scribus.copyObject()
 
-        scribus.gotoPage(insert_at if INSERT_AFTER_1 else scribus.pageCount())
-        for _ in items_on_p1:
+            # Paste once on the destination page
+            scribus.gotoPage(dest_page)
             scribus.pasteObject()
 
         scribus.messagebarText(f"Duplicated page 1 -> page {scribus.currentPage()} ({i+1}/{COPIES})")
