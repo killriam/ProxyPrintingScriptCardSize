@@ -8,6 +8,8 @@
 !scribus_template_proxy.sla
 !README_simple_multi_page.md
 !.gitkeep
+!download_card_images.py
+!proxy_print.py
 
 # Keep empty directories used by the workflow via .gitkeep files
 !mtg/
