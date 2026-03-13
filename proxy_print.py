@@ -116,13 +116,23 @@ def main() -> int:
 
     print(f"Using Scribus: {scribus_cmd}\n")
 
+    # Derive deck name (mirrors simple_multi_page.py logic)
+    deck_name = args.deck_name or xml_path.stem
+    if deck_name.startswith("cards_"):
+        deck_name = deck_name[6:]
+
+    xml_dir = xml_path.parent
     env = os.environ.copy()
     env["SCRIBUS_CMD"] = scribus_cmd
+    # Point image lookup to the XML directory so downloaded images are found there
+    env["MTG_DIR"] = str(xml_dir / "mtg")
 
+    # Pass an absolute output-dir so the SLA lands next to the XML file.
+    # simple_multi_page.py resolves base_dir (script dir) for copy_slaTemplate.py
+    # and the template, so we must NOT pass --base-dir here.
+    output_dir = xml_dir / "ready2Print" / deck_name
     sla_cmd = [sys.executable, str(script_dir / "simple_multi_page.py"), str(xml_path),
-               "--base-dir", str(xml_path.parent)]
-    if args.deck_name:
-        sla_cmd += ["--output-dir", args.deck_name]
+               "--output-dir", str(output_dir)]
     if args.create_cardback:
         sla_cmd.append("--create-cardback")
 
