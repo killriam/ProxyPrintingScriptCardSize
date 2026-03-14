@@ -259,11 +259,13 @@ def main() -> int:
         a4_result = subprocess.run(a4_cmd)
         print()
         print("=" * 60)
-        print("Done!")
         if a4_result.returncode == 0:
+            print("Done!")
             a4_pdf = xml_path.parent / "ready2Print" / deck_name_resolved / f"{deck_name_resolved}_a4.pdf"
             if a4_pdf.exists():
                 print(f"  PDF: {a4_pdf}")
+        else:
+            print("ERROR: A4 PDF generation failed (see output above).")
         print("=" * 60)
         return a4_result.returncode
 

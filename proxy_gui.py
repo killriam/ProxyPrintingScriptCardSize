@@ -206,7 +206,8 @@ class ProxyPrintGUI:
             stem = Path(path).stem
             if stem.startswith("cards_"):
                 stem = stem[6:]
-            clean = re.sub(r"_\d{4}-\d{2}-\d{2}_(missing|all)_proxy$", "", stem)
+            # Strip MaMo date+scope suffix and optional OS copy suffix like " (1)"
+            clean = re.sub(r"_\d{4}-\d{2}-\d{2}_(missing|all)_proxy( \(\d+\))?$", "", stem)
             self.deck_var.set(clean)
 
     def _browse_scribus(self) -> None:
@@ -264,6 +265,34 @@ class ProxyPrintGUI:
 
     # ── Pipeline execution ────────────────────────────────────────────────────
 
+    def _preflight(self) -> bool:
+        """Validate prerequisites and show a user-facing error if something is missing."""
+        from tkinter import messagebox
+        fmt = self.format_var.get()
+        if fmt == "a4":
+            try:
+                import importlib
+                if importlib.util.find_spec("fpdf") is None:
+                    raise ImportError
+            except ImportError:
+                messagebox.showerror(
+                    "Missing dependency",
+                    "The fpdf2 package is required for DIN A4 PDF output but is not installed "
+                    "for the current Python interpreter.\n\n"
+                    f"Install it with:\n  {sys.executable} -m pip install fpdf2>=2.7.0"
+                )
+                return False
+        elif fmt == "cardstock":
+            if not self.scribus_var.get().strip():
+                messagebox.showerror(
+                    "Scribus not found",
+                    "Scribus executable is required for card stock output but was not found.\n\n"
+                    "Install Scribus from https://www.scribus.net/downloads/ "
+                    "or browse to the executable above."
+                )
+                return False
+        return True
+
     def _run(self) -> None:
         xml_path = self.xml_var.get().strip()
         if not xml_path:
@@ -271,6 +300,8 @@ class ProxyPrintGUI:
             return
         if not Path(xml_path).exists():
             self._set_status("XML file not found.", "red")
+            return
+        if not self._preflight():
             return
 
         self.run_btn.config(state="disabled")
@@ -337,7 +368,7 @@ class ProxyPrintGUI:
             stem = xml_p.stem
             if stem.startswith("cards_"):
                 stem = stem[6:]
-            dn = re.sub(r"_\d{4}-\d{2}-\d{2}_(missing|all)_proxy$", "", stem)
+            dn = re.sub(r"_\d{4}-\d{2}-\d{2}_(missing|all)_proxy( \(\d+\))?$", "", stem)
         self._output_dir = xml_p.parent / "ready2Print" / dn
 
         self.root.after(0, self._on_done, rc == 0)
