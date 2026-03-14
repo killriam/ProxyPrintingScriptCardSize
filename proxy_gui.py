@@ -209,6 +209,36 @@ class ProxyPrintGUI:
             # Strip MaMo date+scope suffix and optional OS copy suffix like " (1)"
             clean = re.sub(r"_\d{4}-\d{2}-\d{2}_(missing|all)_proxy( \(\d+\))?$", "", stem)
             self.deck_var.set(clean)
+        # Pre-fill format + A4 options from <printoptions> if present
+        self._load_printoptions(Path(path))
+
+    def _load_printoptions(self, xml_path: Path) -> None:
+        """Read <printoptions> from the XML and pre-fill GUI controls."""
+        import xml.etree.ElementTree as ET
+        try:
+            try:
+                tree = ET.parse(str(xml_path))
+            except ET.ParseError:
+                import io
+                text = xml_path.read_text(encoding="utf-8", errors="replace")
+                text = re.sub(r'(<!--.*?)--(?=.*?-->)', r'\1-', text, flags=re.DOTALL)
+                tree = ET.parse(io.StringIO(text))
+            opts = tree.getroot().find("printoptions")
+            if opts is None:
+                return
+            fmt = opts.get("format", "")
+            if fmt in ("cardstock", "a4"):
+                self.format_var.set(fmt)
+                self._on_format_change()
+            if fmt == "a4":
+                gap = opts.get("gap", "")
+                if gap in ("0", "0.2", "3"):
+                    self.gap_var.set(gap)
+                self.cut_var.set(opts.get("cut-marks", "False") == "True")
+                self.watermark_var.set(opts.get("watermark", "False") == "True")
+                self.skip_lands_var.set(opts.get("skip-basic-lands", "False") == "True")
+        except Exception:
+            pass  # best-effort: never break file selection
 
     def _browse_scribus(self) -> None:
         path = filedialog.askopenfilename(
