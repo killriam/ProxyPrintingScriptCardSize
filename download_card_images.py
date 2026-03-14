@@ -150,10 +150,14 @@ def main() -> int:
         print(f"Error: XML file not found: {xml_path}")
         return 1
 
-    # Determine deck name from XML filename (mirrors simple_multi_page.py logic)
-    deck_name = args.deck_name or xml_path.stem
-    if deck_name.startswith("cards_"):
-        deck_name = deck_name[6:]
+    # Determine deck name from XML filename (mirrors simple_multi_page.py logic).
+    # Strip the MaMo date+scope suffix so images are reused across re-exports:
+    # e.g. "MyDeck_2026-03-14_missing_proxy" -> "MyDeck"
+    import re as _re
+    raw_stem = args.deck_name or xml_path.stem
+    if raw_stem.startswith("cards_"):
+        raw_stem = raw_stem[6:]
+    deck_name = _re.sub(r"_\d{4}-\d{2}-\d{2}_(missing|all)_proxy$", "", raw_stem)
 
     base_image_dir = Path(args.out_dir) if args.out_dir else xml_path.parent / "mtg" / "images"
     output_dir = base_image_dir / deck_name

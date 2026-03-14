@@ -200,14 +200,22 @@ def main() -> int:
     if not xml_path.is_absolute():
         xml_path = Path.cwd() / xml_path
 
+    # Derive a stable deck name by stripping the MaMo date+scope suffix
+    # e.g. "MyDeck_2026-03-14_missing_proxy" -> "MyDeck"
+    raw_stem = xml_path.stem
+    if raw_stem.startswith("cards_"):
+        raw_stem = raw_stem[6:]
+    clean_stem = re.sub(r"_\d{4}-\d{2}-\d{2}_(missing|all)_proxy$", "", raw_stem)
+    deck_name_resolved = args.deck_name or clean_stem
+    print(f"Deck name: {deck_name_resolved}")
+
     # ── Step 1: Download card images ─────────────────────────────────────────
     print("=" * 60)
     print("STEP 1: Downloading card images from Scryfall")
     print("=" * 60)
 
-    dl_cmd = [sys.executable, str(script_dir / "download_card_images.py"), str(xml_path)]
-    if args.deck_name:
-        dl_cmd += ["--deck-name", args.deck_name]
+    dl_cmd = [sys.executable, str(script_dir / "download_card_images.py"), str(xml_path),
+              "--deck-name", deck_name_resolved]
 
     result = subprocess.run(dl_cmd)
     if result.returncode not in (0, 2):  # 2 = partial failure (some images missing)
@@ -225,9 +233,8 @@ def main() -> int:
         print("=" * 60)
         print("STEP 2: Generating DIN A4 PDF (9 cards/page)")
         print("=" * 60)
-        a4_cmd = [sys.executable, str(script_dir / "generate_a4_pdf.py"), str(xml_path)]
-        if args.deck_name:
-            a4_cmd += ["--deck-name", args.deck_name]
+        a4_cmd = [sys.executable, str(script_dir / "generate_a4_pdf.py"), str(xml_path),
+                  "--deck-name", deck_name_resolved]
         a4_cmd += ["--gap", args.gap]
         if args.cut_marks:
             a4_cmd.append("--cut-marks")
@@ -240,10 +247,7 @@ def main() -> int:
         print("=" * 60)
         print("Done!")
         if a4_result.returncode == 0:
-            a4_deck = args.deck_name or xml_path.stem
-            if a4_deck.startswith("cards_"):
-                a4_deck = a4_deck[6:]
-            a4_pdf = xml_path.parent / "ready2Print" / a4_deck / f"{a4_deck}_a4.pdf"
+            a4_pdf = xml_path.parent / "ready2Print" / deck_name_resolved / f"{deck_name_resolved}_a4.pdf"
             if a4_pdf.exists():
                 print(f"  PDF: {a4_pdf}")
         print("=" * 60)
@@ -266,9 +270,7 @@ def main() -> int:
 
     print(f"Using Scribus: {scribus_cmd}\n")
 
-    deck_name = args.deck_name or xml_path.stem
-    if deck_name.startswith("cards_"):
-        deck_name = deck_name[6:]
+    deck_name = deck_name_resolved
 
     xml_dir = xml_path.parent
     output_dir = xml_dir / "ready2Print" / deck_name
@@ -278,7 +280,7 @@ def main() -> int:
     env["MTG_DIR"] = str(xml_dir / "mtg")
 
     sla_cmd = [sys.executable, str(script_dir / "simple_multi_page.py"), str(xml_path),
-               "--output-dir", str(output_dir)]
+               "--output-dir", str(output_dir), "--deck-name", deck_name]
     if args.create_cardback:
         sla_cmd.append("--create-cardback")
 
