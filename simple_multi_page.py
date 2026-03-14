@@ -23,6 +23,7 @@ def main():
     parser.add_argument("xml_file", help="Path to XML file with card information")
     parser.add_argument("--template", "-t", default="scribus_template_proxy.sla", help="Path to template SLA file")
     parser.add_argument("--output-dir", "-o", help="Output directory (default: ready2Print/[deck_name])")
+    parser.add_argument("--deck-name", "-d", default=None, help="Override deck name used for image lookup and output filename")
     parser.add_argument("--base-dir", "-b", help="Base directory for the project")
     parser.add_argument("--create-cardback", action="store_true", help="Create cardback SLA file")
     args = parser.parse_args()
@@ -47,6 +48,9 @@ def main():
         deck_name = xml_path.stem
         if deck_name.startswith("cards_"):
             deck_name = deck_name[6:]  # Remove "cards_" prefix if present
+        # Allow caller to override deck name (e.g. to strip date+scope suffix)
+        if args.deck_name:
+            deck_name = args.deck_name
             
         # Find all cards in the XML
         fronts = root.find("fronts")

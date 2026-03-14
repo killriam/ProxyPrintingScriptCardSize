@@ -296,7 +296,8 @@ def main() -> int:
     env["MTG_DIR"] = str(xml_dir / "mtg")
 
     sla_cmd = [sys.executable, str(script_dir / "simple_multi_page.py"), str(xml_path),
-               "--output-dir", str(output_dir)]
+               "--output-dir", str(output_dir),
+               "--deck-name", deck_name]
     if args.create_cardback:
         sla_cmd.append("--create-cardback")
 
