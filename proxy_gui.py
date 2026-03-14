@@ -301,7 +301,7 @@ class ProxyPrintGUI:
         fmt = self.format_var.get()
         if fmt == "a4":
             try:
-                import importlib
+                import importlib.util
                 if importlib.util.find_spec("fpdf") is None:
                     raise ImportError
             except ImportError:
