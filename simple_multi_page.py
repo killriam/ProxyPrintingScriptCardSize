@@ -107,18 +107,10 @@ def main():
             actual_image_path = find_matching_image_file(image_dir, card_filename)
             
             if actual_image_path and os.path.isfile(actual_image_path):
-                # Compute path relative to output directory for use in SLA
-                try:
-                    rel_path = os.path.relpath(actual_image_path, start=output_path)
-                    rel_path = rel_path.replace('\\', '/')
-                    card_image_paths.append(rel_path)
-                    print(f"Found image for card: {card_filename} -> {rel_path}")
-                except Exception as e:
-                    print(f"Error computing relative path for {actual_image_path}: {e}")
-                    # Use absolute path as fallback
-                    abs_path = str(actual_image_path).replace('\\', '/')
-                    card_image_paths.append(abs_path)
-                    print(f"Using absolute path for card: {card_filename} -> {abs_path}")
+                # Use absolute forward-slash path — avoids Scribus relative-path issues on Windows
+                abs_path = str(Path(actual_image_path).resolve()).replace('\\', '/')
+                card_image_paths.append(abs_path)
+                print(f"Found image for card: {card_filename} -> {abs_path}")
             else:
                 print(f"Warning: No image found for card: {card_filename}")
                 card_image_paths.append(None)
