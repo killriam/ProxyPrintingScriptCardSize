@@ -182,6 +182,17 @@ def main() -> int:
                         help="Export all produced SLA file(s) to PDF after building.")
     parser.add_argument("--create-cardback", action="store_true",
                         help="(legacy) Generate a cardback SLA from the XML <cardback> element.")
+    parser.add_argument("--format", choices=["cardstock", "a4"], default="cardstock",
+                        help="Output format: 'cardstock' (1 card/page Scribus SLA, default) or "
+                             "'a4' (9 cards/page DIN A4 PDF via fpdf2).")
+    parser.add_argument("--gap", choices=["0", "0.2", "3"], default="0.2",
+                        help="[a4 only] Gap in mm between cards (default: 0.2).")
+    parser.add_argument("--cut-marks", action="store_true",
+                        help="[a4 only] Draw 3 mm cut marks at each card corner.")
+    parser.add_argument("--watermark", action="store_true",
+                        help="[a4 only] Add diagonal 'Playtest Card' text across each card.")
+    parser.add_argument("--skip-basic-lands", action="store_true",
+                        help="[a4 only] Omit basic land cards from the output.")
     args = parser.parse_args()
 
     script_dir = Path(__file__).resolve().parent
@@ -205,6 +216,38 @@ def main() -> int:
     if result.returncode == 2:
         print("\nWARNING: Some images failed to download. "
               "Continuing — missing images will appear as blank pages.")
+
+    # ── A4 branch: generate 9-per-page PDF and exit ───────────────────────────
+    if args.format == "a4":
+        if args.background:
+            print("\nWARNING: --background is ignored when --format a4 is used.")
+        print()
+        print("=" * 60)
+        print("STEP 2: Generating DIN A4 PDF (9 cards/page)")
+        print("=" * 60)
+        a4_cmd = [sys.executable, str(script_dir / "generate_a4_pdf.py"), str(xml_path)]
+        if args.deck_name:
+            a4_cmd += ["--deck-name", args.deck_name]
+        a4_cmd += ["--gap", args.gap]
+        if args.cut_marks:
+            a4_cmd.append("--cut-marks")
+        if args.watermark:
+            a4_cmd.append("--watermark")
+        if args.skip_basic_lands:
+            a4_cmd.append("--skip-basic-lands")
+        a4_result = subprocess.run(a4_cmd)
+        print()
+        print("=" * 60)
+        print("Done!")
+        if a4_result.returncode == 0:
+            a4_deck = args.deck_name or xml_path.stem
+            if a4_deck.startswith("cards_"):
+                a4_deck = a4_deck[6:]
+            a4_pdf = xml_path.parent / "ready2Print" / a4_deck / f"{a4_deck}_a4.pdf"
+            if a4_pdf.exists():
+                print(f"  PDF: {a4_pdf}")
+        print("=" * 60)
+        return a4_result.returncode
 
     # ── Step 2: Build front card SLA ──────────────────────────────────────────
     print()

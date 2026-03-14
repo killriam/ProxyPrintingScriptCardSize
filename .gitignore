@@ -11,6 +11,8 @@
 !download_card_images.py
 !proxy_print.py
 !export_to_pdf.py
+!generate_a4_pdf.py
+!requirements.txt
 
 # Keep empty directories used by the workflow via .gitkeep files
 !mtg/
