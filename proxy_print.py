@@ -349,7 +349,7 @@ def main() -> int:
             if pdf.exists():
                 print(f"  PDF: {pdf}")
     if not args.pdf:
-        print("  → Open .sla file(s) in Scribus and export as PDF, or re-run with --pdf.")
+        print("  -> Open .sla file(s) in Scribus and export as PDF, or re-run with --pdf.")
     print("=" * 60)
     return 0
 
