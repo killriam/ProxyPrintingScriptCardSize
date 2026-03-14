@@ -17,6 +17,8 @@ Options:
 """
 
 import argparse
+import io
+import re
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -42,9 +44,18 @@ COLS = 3
 ROWS = 3
 
 
+def _sanitize_xml(xml_path: Path) -> str:
+    """Replace '--' inside XML comment bodies to avoid ET.ParseError."""
+    text = xml_path.read_text(encoding="utf-8", errors="replace")
+    return re.sub(r'(<!--.*?)--(?=.*?-->)', r'\1-', text, flags=re.DOTALL)
+
+
 def parse_card_names(xml_path: Path) -> list[str]:
     """Return list of card image filenames from <cardpacks><fronts><card><name>."""
-    tree = ET.parse(xml_path)
+    try:
+        tree = ET.parse(xml_path)
+    except ET.ParseError:
+        tree = ET.parse(io.StringIO(_sanitize_xml(xml_path)))
     root = tree.getroot()
     names = []
     for card in root.findall(".//fronts/card"):

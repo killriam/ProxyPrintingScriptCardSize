@@ -71,10 +71,24 @@ def find_scribus() -> str | None:
     return None
 
 
+def sanitize_xml(xml_path: Path) -> str:
+    """
+    Return the XML file content with any '--' inside comment bodies replaced
+    by '-' so that ET.parse does not raise 'not well-formed (invalid token)'.
+    The '--' sequence is forbidden inside XML comments by the XML 1.0 spec.
+    """
+    text = xml_path.read_text(encoding="utf-8", errors="replace")
+    return re.sub(r'(<!--.*?)--(?=.*?-->)', r'\1-', text, flags=re.DOTALL)
+
+
 def count_cards_in_xml(xml_path: Path) -> int:
     """Return the number of <card> entries in the <fronts> section of the proxy XML."""
     try:
-        root = ET.parse(str(xml_path)).getroot()
+        try:
+            root = ET.parse(str(xml_path)).getroot()
+        except ET.ParseError:
+            import io
+            root = ET.parse(io.StringIO(sanitize_xml(xml_path))).getroot()
         fronts = root.find("fronts")
         return len(list(fronts.findall("card"))) if fronts is not None else 0
     except Exception:

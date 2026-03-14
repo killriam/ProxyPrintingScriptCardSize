@@ -50,6 +50,18 @@ def sanitize_filename(name: str) -> str:
     return name
 
 
+def sanitize_xml(xml_path: Path) -> str:
+    """
+    Return the XML file content with any '--' inside comment bodies replaced
+    by '-' so that ET.parse does not raise 'not well-formed (invalid token)'.
+    The '--' sequence is forbidden inside XML comments by the XML 1.0 spec.
+    """
+    import re as _re
+    text = xml_path.read_text(encoding="utf-8", errors="replace")
+    # Replace '--' that appears *inside* a comment (between <!-- and -->)
+    return _re.sub(r'(<!--.*?)--(?=.*?-->)', r'\1-', text, flags=_re.DOTALL)
+
+
 def scryfall_get(url: str) -> dict | None:
     """Perform an HTTP GET against a Scryfall endpoint and return parsed JSON, or None on error."""
     req = urllib.request.Request(url, headers=HEADERS)
@@ -93,7 +105,12 @@ def collect_card_names_from_xml(xml_path: Path) -> list[str]:
     Each <card> entry represents one physical copy needed, so a card that appears
     three times in this list requires three pages in the SLA.
     """
-    tree = ET.parse(str(xml_path))
+    try:
+        tree = ET.parse(str(xml_path))
+    except ET.ParseError:
+        # Retry after stripping '--' from XML comment bodies (legacy exports)
+        import io
+        tree = ET.parse(io.StringIO(sanitize_xml(xml_path)))
     root = tree.getroot()
 
     fronts = root.find("fronts")
