@@ -10,6 +10,7 @@
 !.gitkeep
 !download_card_images.py
 !proxy_print.py
+!proxy_gui.py
 !export_to_pdf.py
 !generate_a4_pdf.py
 !requirements.txt
