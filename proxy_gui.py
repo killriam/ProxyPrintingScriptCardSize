@@ -114,12 +114,7 @@ class ProxyPrintGUI:
         )
         ttk.Button(bg_row, text="Browse…", command=self._browse_bg).pack(side="left")
 
-        self.pdf_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            self.frame_cs,
-            text="Export SLA(s) to PDF automatically after build",
-            variable=self.pdf_var,
-        ).pack(anchor="w", padx=8, pady=(4, 6))
+
 
         # ── A4 options ─────────────────────────────────────────────────────
         self.frame_a4 = ttk.LabelFrame(self._options_container, text="A4 options")
@@ -305,8 +300,6 @@ class ProxyPrintGUI:
             bg = self.bg_var.get().strip()
             if bg:
                 cmd += ["--background", bg]
-            if self.pdf_var.get():
-                cmd.append("--pdf")
         else:  # a4
             cmd += ["--gap", self.gap_var.get()]
             if self.cut_var.get():
