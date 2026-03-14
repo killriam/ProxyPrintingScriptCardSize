@@ -345,7 +345,8 @@ class ProxyPrintGUI:
         threading.Thread(target=self._run_pipeline, args=(xml_path,), daemon=True).start()
 
     def _run_pipeline(self, xml_path: str) -> None:
-        cmd = [sys.executable, str(SCRIPT_DIR / "proxy_print.py"), xml_path]
+        # -u: unbuffered stdout so proxy_print.py's prints appear in correct order
+        cmd = [sys.executable, "-u", str(SCRIPT_DIR / "proxy_print.py"), xml_path]
 
         deck_name = self.deck_var.get().strip()
         if deck_name:

@@ -448,11 +448,11 @@ def update_image_paths_in_sla(sla_file_path, card_image_paths):
         with open(sla_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
-        print(f"Debug: SLA file content length: {len(content)} characters")
+        print(f"SLA file content length: {len(content)} characters")
 
         # Find all PAGEOBJECT self-closing blocks
         matches = list(re.finditer(r'<PAGEOBJECT\b[^>]*?/>', content, re.DOTALL))
-        print(f"Debug: Found {len(matches)} PAGEOBJECT blocks in SLA")
+        print(f"Found {len(matches)} PAGEOBJECT blocks in SLA")
 
         # Collect image-like blocks and keep the first image block as a template
         image_blocks = []  # list of (match_index, start, end, block, attrs)
@@ -486,7 +486,7 @@ def update_image_paths_in_sla(sla_file_path, card_image_paths):
                     page_map.setdefault(page_num, []).append((idx, m.start(), m.end(), block, attrs))
 
         total_pages = len(card_image_paths)
-        print(f"Debug: Collected {len(image_blocks)} image-like PAGEOBJECT blocks; mapped pages: {sorted(page_map.keys())}")
+        print(f"Collected {len(image_blocks)} image-like PAGEOBJECT blocks; mapped pages: {sorted(page_map.keys())}")
 
         # Decide strategy: prefer explicit page mapping when it looks meaningful
         meaningful_page_nums = {p for (_, _, _, _, _, p) in image_blocks if p is not None}
@@ -513,7 +513,7 @@ def update_image_paths_in_sla(sla_file_path, card_image_paths):
                     if cur != new_path:
                         new_block = new_block.replace(f'PFILE="{cur}"', f'PFILE="{new_path}"', 1)
                         changes = True
-                        print(f"Debug: Mapped Page {page_num}: Replaced existing PFILE '{cur}' -> '{new_path}' (match {m_idx})")
+                        print(f"  Page {page_num}: {new_path}")
                 else:
                     # insert PFILE into block
                     insert_text = f' PFILE="{new_path}"'
@@ -527,7 +527,7 @@ def update_image_paths_in_sla(sla_file_path, card_image_paths):
                         else:
                             new_block = new_block[:-1] + insert_text + '>'
                     changes = True
-                    print(f"Debug: Mapped Page {page_num}: Inserted PFILE='{new_path}' into image block (match {m_idx})")
+                    print(f"  Page {page_num}: inserted {new_path}")
 
                 replacements[m_idx] = new_block
 
@@ -545,7 +545,7 @@ def update_image_paths_in_sla(sla_file_path, card_image_paths):
                     if cur != new_path:
                         new_block = new_block.replace(f'PFILE="{cur}"', f'PFILE="{new_path}"', 1)
                         changes = True
-                        print(f"Debug: Sequential assign page {assign_idx}: Replaced existing PFILE '{cur}' -> '{new_path}' (match {m_idx})")
+                        print(f"  Page [{assign_idx}]: {new_path}")
                 else:
                     insert_text = f' PFILE="{new_path}"'
                     insert_match = re.search(r"\s(IRENDER|EMBEDDED|path)=", new_block)
@@ -558,7 +558,7 @@ def update_image_paths_in_sla(sla_file_path, card_image_paths):
                         else:
                             new_block = new_block[:-1] + insert_text + '>'
                     changes = True
-                    print(f"Debug: Sequential assign page {assign_idx}: Inserted PFILE='{new_path}' into image block (match {m_idx})")
+                    print(f"  Page [{assign_idx}]: inserted {new_path}")
 
                 replacements[m_idx] = new_block
 
@@ -599,7 +599,7 @@ def update_image_paths_in_sla(sla_file_path, card_image_paths):
                     # store under a synthetic match index beyond existing ones to insert later
                     replacements[f'clone_{idx_page}'] = cloned
                     changes = True
-                    print(f"Debug: Cloned template for missing page {idx_page} and set PFILE='{new_path}'")
+                    print(f"  Page [{idx_page}] (cloned): inserted {new_path}")
 
         # Rebuild file content using replacements
         out_parts = []
@@ -621,12 +621,9 @@ def update_image_paths_in_sla(sla_file_path, card_image_paths):
             if isinstance(key, str) and key.startswith('clone_'):
                 new_content = new_content.replace('</DOCUMENT>', f'{cloned}\n    </DOCUMENT>')
 
-        print(f"Debug: Changes made to SLA file: {changes}")
-
         with open(sla_file_path, 'w', encoding='utf-8') as f:
             f.write(new_content)
 
-        print(f"Debug: Updated SLA file written successfully")
         return True
     
     except Exception as e:
