@@ -154,8 +154,10 @@ def export_sla_to_pdf(
     result = subprocess.run(cmd, env=env, capture_output=True, text=True)
     if result.stdout.strip():
         print(result.stdout)
+    if result.stderr.strip():
+        print(f"  Scribus stderr: {result.stderr.strip()}")
     if result.returncode != 0:
-        print(f"  ERROR: PDF export failed:\n{result.stderr}")
+        print(f"  ERROR: PDF export failed (exit {result.returncode})")
         return None
     if pdf_path.exists():
         print(f"  PDF created: {pdf_path}")

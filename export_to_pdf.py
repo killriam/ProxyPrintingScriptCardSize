@@ -23,9 +23,11 @@ pdf_path = os.environ.get("SCRIBUS_PDF_OUTPUT",
 
 print(f"export_to_pdf.py: Exporting '{doc_path}' -> '{pdf_path}'")
 
-pdf = scribus.PDF()
-pdf.file = pdf_path
-pdf.save()
-
-print("export_to_pdf.py: Export complete.")
-scribus.closeDoc()
+try:
+    pdf = scribus.PDFfile()
+    pdf.file = pdf_path
+    pdf.save()
+    print("export_to_pdf.py: Export complete.")
+except Exception as e:
+    print(f"export_to_pdf.py: ERROR: {e}", file=sys.stderr)
+    sys.exit(1)
