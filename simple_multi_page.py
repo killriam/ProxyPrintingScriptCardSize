@@ -139,6 +139,11 @@ def main():
         # Now run the copy_slaTemplate.py script with Scribus
         # The script duplicates the first page for each card
         scribus_cmd = os.environ.get("SCRIBUS_CMD", "scribus")
+        resolved_scribus_cmd = shutil.which(scribus_cmd)
+        if resolved_scribus_cmd is None:
+            print(f"Error: Scribus executable not found: {scribus_cmd}")
+            return 1
+        scribus_cmd = resolved_scribus_cmd
         script_path = base_dir / "copy_slaTemplate.py"
         
         if not script_path.exists():

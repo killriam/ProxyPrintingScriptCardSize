@@ -1,1 +1,2 @@
+defusedxml>=0.7.1
 fpdf2>=2.7.0

@@ -32,7 +32,7 @@ import urllib.request
 import urllib.parse
 import urllib.error
 import json
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
 from pathlib import Path
 
 SCRYFALL_NAMED_URL = "https://api.scryfall.com/cards/named"
