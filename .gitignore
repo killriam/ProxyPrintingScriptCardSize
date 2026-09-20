@@ -13,6 +13,7 @@
 !proxy_gui.py
 !export_to_pdf.py
 !generate_a4_pdf.py
+!generate_stickers_pdf.py
 !barcode_stamper.py
 !requirements.txt
 

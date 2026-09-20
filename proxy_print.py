@@ -196,9 +196,11 @@ def main() -> int:
                         help="Export all produced SLA file(s) to PDF after building.")
     parser.add_argument("--create-cardback", action="store_true",
                         help="(legacy) Generate a cardback SLA from the XML <cardback> element.")
-    parser.add_argument("--format", choices=["cardstock", "a4"], default="cardstock",
-                        help="Output format: 'cardstock' (1 card/page Scribus SLA, default) or "
-                             "'a4' (9 cards/page DIN A4 PDF via fpdf2).")
+    parser.add_argument("--format", choices=["cardstock", "a4", "stickers"], default=None,
+                        help="Output format: 'cardstock' (1 card/page Scribus SLA), "
+                             "'a4' (9 cards/page DIN A4 PDF), or "
+                             "'stickers' (dense 8x18 Data Matrix barcode sticker sheet). "
+                             "Defaults to format specified in XML <printoptions> or 'cardstock'.")
     parser.add_argument("--gap", choices=["0", "0.2", "3"], default="0.2",
                         help="[a4 only] Gap in mm between cards (default: 0.2).")
     parser.add_argument("--cut-marks", action="store_true",
@@ -206,7 +208,11 @@ def main() -> int:
     parser.add_argument("--watermark", action="store_true",
                         help="[a4 only] Add diagonal 'Playtest Card' text across each card.")
     parser.add_argument("--skip-basic-lands", action="store_true",
-                        help="[a4 only] Omit basic land cards from the output.")
+                        help="[a4 / stickers] Omit basic land cards from the output.")
+    parser.add_argument("--cols", type=int, default=7,
+                        help="[stickers only] Number of columns per sheet (default: 7).")
+    parser.add_argument("--rows", type=int, default=25,
+                        help="[stickers only] Number of rows per sheet (default: 25).")
     args = parser.parse_args()
 
     script_dir = Path(__file__).resolve().parent
@@ -214,14 +220,62 @@ def main() -> int:
     if not xml_path.is_absolute():
         xml_path = Path.cwd() / xml_path
 
+    # Derive format: CLI argument takes precedence, then XML <printoptions format="...">, then cardstock
+    resolved_format = args.format
+    if not resolved_format:
+        try:
+            try:
+                tree = ET.parse(str(xml_path))
+            except ET.ParseError:
+                import io
+                tree = ET.parse(io.StringIO(sanitize_xml(xml_path)))
+            root = tree.getroot()
+            po = root.find(".//printoptions")
+            if po is not None and "format" in po.attrib:
+                xml_fmt = po.attrib["format"].strip().lower()
+                if xml_fmt in ("cardstock", "a4", "stickers"):
+                    resolved_format = xml_fmt
+        except Exception:
+            pass
+    if not resolved_format:
+        resolved_format = "cardstock"
+
     # Derive a stable deck name by stripping the MaMo date+scope suffix
     # e.g. "MyDeck_2026-03-14_missing_proxy" -> "MyDeck"
+    # or   "MyDeck_2026-03-14_owned_stickers" -> "MyDeck"
     raw_stem = xml_path.stem
     if raw_stem.startswith("cards_"):
         raw_stem = raw_stem[6:]
-    clean_stem = re.sub(r"_\d{4}-\d{2}-\d{2}_(missing|all)_proxy$", "", raw_stem)
+    clean_stem = re.sub(r"_\d{4}-\d{2}-\d{2}_(missing|all|owned)_(proxy|stickers)$", "", raw_stem)
     deck_name_resolved = args.deck_name or clean_stem
-    print(f"Deck name: {deck_name_resolved}")
+    print(f"Deck name: {deck_name_resolved} (Format: {resolved_format})")
+
+    # ── Stickers branch: dense barcode labels without full card image downloads ──
+    if resolved_format == "stickers":
+        if args.background:
+            print("\nWARNING: --background is ignored when --format stickers is used.")
+        print()
+        print("=" * 60)
+        print("STEP 1: Generating DIN A4 Barcode Sticker Sheet (8x18 Data Matrix)")
+        print("=" * 60)
+        st_cmd = [sys.executable, str(script_dir / "generate_stickers_pdf.py"), str(xml_path),
+                  "--deck-name", deck_name_resolved,
+                  "--cols", str(args.cols),
+                  "--rows", str(args.rows)]
+        if args.skip_basic_lands:
+            st_cmd.append("--skip-basic-lands")
+        st_result = subprocess.run(st_cmd)
+        print()
+        print("=" * 60)
+        if st_result.returncode == 0:
+            print("Done!")
+            st_pdf = xml_path.parent / "ready2Print" / deck_name_resolved / f"{deck_name_resolved}_stickers.pdf"
+            if st_pdf.exists():
+                print(f"  Stickers PDF: {st_pdf}")
+        else:
+            print("ERROR: Sticker sheet generation failed (see output above).")
+        print("=" * 60)
+        return st_result.returncode
 
     # ── Step 1: Download card images ─────────────────────────────────────────
     print("=" * 60)
@@ -240,7 +294,7 @@ def main() -> int:
               "Continuing — missing images will appear as blank pages.")
 
     # ── A4 branch: generate 9-per-page PDF and exit ───────────────────────────
-    if args.format == "a4":
+    if resolved_format == "a4":
         if args.background:
             print("\nWARNING: --background is ignored when --format a4 is used.")
         print()
