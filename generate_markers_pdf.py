@@ -1,0 +1,316 @@
+#!/usr/bin/env python3
+"""
+generate_markers_pdf.py — Generate a DIN A4 sheet of slip-in ID markers with 8x18 Data Matrix barcodes.
+
+Designed for printing compact slip-in markers (7 columns × 40 rows = up to 280 markers)
+on standard paper or light cardstock. Cut along the guidelines and slide directly into
+the bottom footer of card sleeves in front of real Magic cards.
+
+At 3.6 mm height, markers fit completely inside the bottom black border of standard MTG
+cards, leaving 100% of card artwork, rules text, and stats completely visible. No adhesive
+is required.
+
+Usage:
+    python generate_markers_pdf.py <xml_file> [options]
+
+Options:
+    --deck-name NAME      Override the deck name for output folder and filename.
+    --output-dir DIR      Custom output directory.
+    --cols N              Columns per sheet (default: 7).
+    --rows N              Rows per sheet (default: 40).
+    --marker-w MM         Marker width in mm (default: 25.0 mm; use 8.0 for compact badge only).
+    --gap-x MM            Horizontal gap between markers in mm (default: 2.0).
+    --gap-y MM            Vertical gap between markers in mm (default: 1.5).
+    --compact             Shortcut for --marker-w 8.0 (exact proxy badge size, barcode only).
+    --skip-basic-lands    Omit basic lands.
+"""
+
+import argparse
+import io
+import re
+import sys
+from pathlib import Path
+
+try:
+    from fpdf import FPDF
+except ImportError:
+    print("ERROR: fpdf2 is required. Install it with:  pip install fpdf2>=2.7.0")
+    sys.exit(1)
+
+try:
+    import defusedxml.ElementTree as ET
+except ImportError:
+    import xml.etree.ElementTree as ET
+
+try:
+    from barcode_stamper import generate_barcode_badge, is_barcode_available
+except ImportError:
+    try:
+        from .barcode_stamper import generate_barcode_badge, is_barcode_available
+    except Exception:
+        generate_barcode_badge = None
+        is_barcode_available = lambda: False
+
+BASIC_LAND_NAMES = {
+    "Forest", "Island", "Mountain", "Plains", "Swamp",
+    "Snow-Covered Forest", "Snow-Covered Island",
+    "Snow-Covered Mountain", "Snow-Covered Plains", "Snow-Covered Swamp",
+}
+
+PAGE_W = 210.0   # DIN A4 width in mm
+PAGE_H = 297.0   # DIN A4 height in mm
+
+# Sized to match the physical proxy print ID marker in MTG bottom black footer
+MARKER_H = 3.6   # Exactly 3.6 mm tall — fits within 3.8 mm card bottom border
+BARCODE_W = 7.6  # 8x18 Data Matrix badge width (matching 80x38px @ 672x936)
+BARCODE_H = 3.6  # 8x18 Data Matrix badge height
+
+
+class MarkerEntry:
+    """Represents a single slip-in marker instance to print."""
+    def __init__(self, card_name: str, slot: int | None = None, optical_id: str | None = None):
+        self.card_name = card_name
+        self.slot = slot
+        self.optical_id = optical_id
+
+
+def _sanitize_xml(xml_path: Path) -> str:
+    """Replace '--' inside XML comment bodies to avoid ET.ParseError."""
+    text = xml_path.read_text(encoding="utf-8", errors="replace")
+    return re.sub(r'(<!--.*?)--(?=.*?-->)', r'\1-', text, flags=re.DOTALL)
+
+
+def parse_marker_entries(xml_path: Path) -> tuple[list[MarkerEntry], int]:
+    """
+    Parse XML to extract slip-in marker entries.
+    Returns (entries, deck_id).
+    """
+    try:
+        tree = ET.parse(xml_path)
+    except Exception:
+        tree = ET.parse(io.StringIO(_sanitize_xml(xml_path)))
+
+    root = tree.getroot()
+    entries: list[MarkerEntry] = []
+    deck_id = 1
+
+    # Extract deck_id from printoptions if present
+    print_options = root.find(".//printoptions")
+    if print_options is not None:
+        raw_deck_id = print_options.attrib.get("deck-id")
+        if raw_deck_id and raw_deck_id.isdigit():
+            deck_id = int(raw_deck_id)
+
+    for card in root.findall(".//fronts/card"):
+        name_el = card.find("name")
+        if name_el is None or not name_el.text:
+            continue
+
+        filename = name_el.text.strip()
+        slot_el = card.find("slot")
+        opt_el = card.find("optical_id")
+
+        slot_num: int | None = None
+        if slot_el is not None and slot_el.text and slot_el.text.strip().isdigit():
+            slot_num = int(slot_el.text.strip())
+
+        opt_id: str | None = None
+        if opt_el is not None and opt_el.text and opt_el.text.strip():
+            opt_id = opt_el.text.strip().upper()
+        elif slot_num is not None:
+            # Fallback synthesis if optical_id was not populated
+            opt_id = f"{deck_id:02X}{slot_num:02X}00"
+
+        # Format display name
+        display_name = filename
+        for suffix in ("_normal.jpg", "_normal.png", ".jpg", ".png"):
+            if display_name.lower().endswith(suffix):
+                display_name = display_name[:-len(suffix)]
+                break
+        display_name = display_name.replace("_", " ")
+
+        entries.append(MarkerEntry(display_name, slot_num, opt_id))
+
+    return entries, deck_id
+
+
+def build_markers_pdf(
+    xml_path: Path,
+    deck_name: str | None = None,
+    output_dir: Path | None = None,
+    cols: int = 7,
+    rows: int = 40,
+    marker_w: float = 25.0,
+    gap_x: float = 2.0,
+    gap_y: float = 1.5,
+    skip_basic_lands: bool = False,
+) -> Path:
+    """Build and save the DIN A4 slip-in ID markers sheet PDF."""
+    if not is_barcode_available():
+        raise RuntimeError("Barcode libraries (Pillow, pyStrich) are missing or incomplete.")
+
+    raw_entries, default_deck_id = parse_marker_entries(xml_path)
+
+    # Filter basic lands if requested
+    if skip_basic_lands:
+        entries = [e for e in raw_entries if e.card_name not in BASIC_LAND_NAMES]
+    else:
+        entries = raw_entries
+
+    if not entries:
+        print(f"Warning: No marker entries found in {xml_path.name}")
+
+    # Resolve deck name
+    resolved_deck = deck_name or xml_path.stem
+    if resolved_deck.startswith("cards_"):
+        resolved_deck = resolved_deck[6:]
+    resolved_deck = re.sub(r"_\d{4}-\d{2}-\d{2}_(missing|all|owned)_(proxy|markers|stickers)$", "", resolved_deck)
+
+    out_folder = output_dir or (xml_path.parent / "ready2Print" / resolved_deck)
+    out_folder.mkdir(parents=True, exist_ok=True)
+    out_pdf = out_folder / f"{resolved_deck}_markers.pdf"
+
+    # Layout calculations
+    per_page = cols * rows
+    grid_w = cols * marker_w + (cols - 1) * gap_x
+    grid_h = rows * MARKER_H + (rows - 1) * gap_y
+    margin_x = max(2.0, (PAGE_W - grid_w) / 2.0)
+    margin_y = max(6.0, (PAGE_H - grid_h) / 2.0)
+
+    total_pages = max(1, (len(entries) + per_page - 1) // per_page)
+
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(False)
+
+    badge_cache: dict[str, io.BytesIO] = {}
+    is_compact = marker_w < 12.0
+
+    for page_idx in range(total_pages):
+        pdf.add_page()
+
+        # Header metadata
+        pdf.set_font("Helvetica", "I", 6.5)
+        pdf.set_text_color(120, 120, 120)
+        header_text = (
+            f"Deck: {resolved_deck}  |  Sheet {page_idx + 1} of {total_pages}  |  "
+            f"{len(entries)} Slip-in ID Markers (3.6 mm footer height)  |  8x18 Data Matrix"
+        )
+        pdf.set_xy(margin_x, margin_y - 4.5)
+        pdf.cell(grid_w, 3.5, header_text, align="C")
+
+        page_entries = entries[page_idx * per_page : (page_idx + 1) * per_page]
+
+        for idx, item in enumerate(page_entries):
+            c = idx % cols
+            r = idx // cols
+
+            x = margin_x + c * (marker_w + gap_x)
+            y = margin_y + r * (MARKER_H + gap_y)
+
+            # Hairline cutting border around marker
+            pdf.set_draw_color(200, 200, 200)
+            pdf.set_line_width(0.12)
+            pdf.rect(x, y, marker_w, MARKER_H)
+
+            # Render barcode badge
+            if item.optical_id:
+                if item.optical_id not in badge_cache:
+                    badge_img = generate_barcode_badge(item.optical_id, mod_scale=8, qz_x=6, qz_y=4)
+                    if badge_img is not None:
+                        buf = io.BytesIO()
+                        badge_img.save(buf, format="PNG")
+                        buf.seek(0)
+                        badge_cache[item.optical_id] = buf
+                    else:
+                        badge_cache[item.optical_id] = None
+
+                cached_buf = badge_cache.get(item.optical_id)
+                if cached_buf:
+                    bc_x = x + 0.2
+                    bc_y = y
+                    pdf.image(cached_buf, x=bc_x, y=bc_y, w=BARCODE_W, h=BARCODE_H)
+
+            # Text section (only if not compact mode)
+            if not is_compact:
+                text_x = x + BARCODE_W + 0.8
+                text_w = marker_w - BARCODE_W - 1.2
+
+                # Slot prefix + Card Name in single clean line (e.g. "#15 Cyclonic Rift")
+                slot_prefix = f"#{item.slot} " if item.slot is not None else ""
+                display_name = f"{slot_prefix}{item.card_name}".encode("latin-1", "replace").decode("latin-1")
+
+                pdf.set_font("Helvetica", "B" if item.slot is not None else "", 5.2)
+                pdf.set_text_color(30, 30, 30)
+
+                # Truncate if exceeds text width
+                if pdf.get_string_width(display_name) > text_w:
+                    while len(display_name) > 1 and pdf.get_string_width(display_name + "..") > text_w:
+                        display_name = display_name[:-1].rstrip()
+                    display_name = display_name + ".."
+
+                pdf.set_xy(text_x, y + 0.3)
+                pdf.cell(text_w, 3.0, display_name, align="L")
+
+    pdf.output(str(out_pdf))
+    print(f"Slip-in ID markers sheet generated: {out_pdf} ({len(entries)} markers, {total_pages} page(s))")
+    return out_pdf
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Generate a DIN A4 sheet of slip-in ID markers with 8x18 Data Matrix barcodes for MTG cards."
+    )
+    parser.add_argument("xml_file", help="Path to the proxy XML file from MaMo.")
+    parser.add_argument("--deck-name", "-d", default=None,
+                        help="Override deck name for output folder and filename.")
+    parser.add_argument("--output-dir", default=None,
+                        help="Custom output directory.")
+    parser.add_argument("--cols", type=int, default=7,
+                        help="Number of columns per sheet (default: 7).")
+    parser.add_argument("--rows", type=int, default=40,
+                        help="Number of rows per sheet (default: 40).")
+    parser.add_argument("--marker-w", type=float, default=25.0,
+                        help="Marker width in mm (default: 25.0).")
+    parser.add_argument("--compact", action="store_true",
+                        help="Compact mode: marker width 8.0 mm (exact proxy badge size, barcode only).")
+    parser.add_argument("--gap-x", type=float, default=2.0,
+                        help="Horizontal gap between markers in mm (default: 2.0).")
+    parser.add_argument("--gap-y", type=float, default=1.5,
+                        help="Vertical gap between markers in mm (default: 1.5).")
+    parser.add_argument("--skip-basic-lands", action="store_true",
+                        help="Omit basic lands from markers.")
+
+    args = parser.parse_args()
+
+    xml_path = Path(args.xml_file)
+    if not xml_path.is_absolute():
+        xml_path = Path.cwd() / xml_path
+
+    if not xml_path.exists():
+        print(f"ERROR: XML file not found: {xml_path}")
+        return 1
+
+    marker_width = 8.0 if args.compact else args.marker_w
+
+    try:
+        build_markers_pdf(
+            xml_path=xml_path,
+            deck_name=args.deck_name,
+            output_dir=Path(args.output_dir) if args.output_dir else None,
+            cols=args.cols,
+            rows=args.rows,
+            marker_w=marker_width,
+            gap_x=args.gap_x,
+            gap_y=args.gap_y,
+            skip_basic_lands=args.skip_basic_lands,
+        )
+        return 0
+    except Exception as exc:
+        print(f"ERROR: Failed to generate markers PDF: {exc}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -196,10 +196,10 @@ def main() -> int:
                         help="Export all produced SLA file(s) to PDF after building.")
     parser.add_argument("--create-cardback", action="store_true",
                         help="(legacy) Generate a cardback SLA from the XML <cardback> element.")
-    parser.add_argument("--format", choices=["cardstock", "a4", "stickers"], default=None,
+    parser.add_argument("--format", choices=["cardstock", "a4", "markers", "stickers"], default=None,
                         help="Output format: 'cardstock' (1 card/page Scribus SLA), "
                              "'a4' (9 cards/page DIN A4 PDF), or "
-                             "'stickers' (dense 8x18 Data Matrix barcode sticker sheet). "
+                             "'markers' (dense 8x18 Data Matrix slip-in marker sheet, 3.6mm height). "
                              "Defaults to format specified in XML <printoptions> or 'cardstock'.")
     parser.add_argument("--gap", choices=["0", "0.2", "3"], default="0.2",
                         help="[a4 only] Gap in mm between cards (default: 0.2).")
@@ -208,11 +208,13 @@ def main() -> int:
     parser.add_argument("--watermark", action="store_true",
                         help="[a4 only] Add diagonal 'Playtest Card' text across each card.")
     parser.add_argument("--skip-basic-lands", action="store_true",
-                        help="[a4 / stickers] Omit basic land cards from the output.")
+                        help="[a4 / markers] Omit basic land cards from the output.")
     parser.add_argument("--cols", type=int, default=7,
-                        help="[stickers only] Number of columns per sheet (default: 7).")
-    parser.add_argument("--rows", type=int, default=25,
-                        help="[stickers only] Number of rows per sheet (default: 25).")
+                        help="[markers only] Number of columns per sheet (default: 7).")
+    parser.add_argument("--rows", type=int, default=40,
+                        help="[markers only] Number of rows per sheet (default: 40).")
+    parser.add_argument("--compact", action="store_true",
+                        help="[markers only] Compact mode (8.0 mm width, exact proxy badge size).")
     args = parser.parse_args()
 
     script_dir = Path(__file__).resolve().parent
@@ -222,6 +224,8 @@ def main() -> int:
 
     # Derive format: CLI argument takes precedence, then XML <printoptions format="...">, then cardstock
     resolved_format = args.format
+    if resolved_format == "stickers":
+        resolved_format = "markers"
     if not resolved_format:
         try:
             try:
@@ -233,8 +237,8 @@ def main() -> int:
             po = root.find(".//printoptions")
             if po is not None and "format" in po.attrib:
                 xml_fmt = po.attrib["format"].strip().lower()
-                if xml_fmt in ("cardstock", "a4", "stickers"):
-                    resolved_format = xml_fmt
+                if xml_fmt in ("cardstock", "a4", "markers", "stickers"):
+                    resolved_format = "markers" if xml_fmt == "stickers" else xml_fmt
         except Exception:
             pass
     if not resolved_format:
@@ -242,26 +246,28 @@ def main() -> int:
 
     # Derive a stable deck name by stripping the MaMo date+scope suffix
     # e.g. "MyDeck_2026-03-14_missing_proxy" -> "MyDeck"
-    # or   "MyDeck_2026-03-14_owned_stickers" -> "MyDeck"
+    # or   "MyDeck_2026-03-14_owned_markers" -> "MyDeck"
     raw_stem = xml_path.stem
     if raw_stem.startswith("cards_"):
         raw_stem = raw_stem[6:]
-    clean_stem = re.sub(r"_\d{4}-\d{2}-\d{2}_(missing|all|owned)_(proxy|stickers)$", "", raw_stem)
+    clean_stem = re.sub(r"_\d{4}-\d{2}-\d{2}_(missing|all|owned)_(proxy|markers|stickers)$", "", raw_stem)
     deck_name_resolved = args.deck_name or clean_stem
     print(f"Deck name: {deck_name_resolved} (Format: {resolved_format})")
 
-    # ── Stickers branch: dense barcode labels without full card image downloads ──
-    if resolved_format == "stickers":
+    # ── Slip-in Markers branch: dense barcode tags without full card image downloads ──
+    if resolved_format == "markers":
         if args.background:
-            print("\nWARNING: --background is ignored when --format stickers is used.")
+            print("\nWARNING: --background is ignored when --format markers is used.")
         print()
         print("=" * 60)
-        print("STEP 1: Generating DIN A4 Barcode Sticker Sheet (8x18 Data Matrix)")
+        print("STEP 1: Generating DIN A4 Slip-in ID Marker Sheet (8x18 Data Matrix)")
         print("=" * 60)
-        st_cmd = [sys.executable, str(script_dir / "generate_stickers_pdf.py"), str(xml_path),
+        st_cmd = [sys.executable, str(script_dir / "generate_markers_pdf.py"), str(xml_path),
                   "--deck-name", deck_name_resolved,
                   "--cols", str(args.cols),
                   "--rows", str(args.rows)]
+        if getattr(args, "compact", False):
+            st_cmd.append("--compact")
         if args.skip_basic_lands:
             st_cmd.append("--skip-basic-lands")
         st_result = subprocess.run(st_cmd)
@@ -269,11 +275,11 @@ def main() -> int:
         print("=" * 60)
         if st_result.returncode == 0:
             print("Done!")
-            st_pdf = xml_path.parent / "ready2Print" / deck_name_resolved / f"{deck_name_resolved}_stickers.pdf"
+            st_pdf = xml_path.parent / "ready2Print" / deck_name_resolved / f"{deck_name_resolved}_markers.pdf"
             if st_pdf.exists():
-                print(f"  Stickers PDF: {st_pdf}")
+                print(f"  Markers PDF: {st_pdf}")
         else:
-            print("ERROR: Sticker sheet generation failed (see output above).")
+            print("ERROR: Marker sheet generation failed (see output above).")
         print("=" * 60)
         return st_result.returncode
 
