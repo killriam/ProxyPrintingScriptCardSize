@@ -29,6 +29,15 @@ except ImportError:
     print("ERROR: fpdf2 is required. Install it with:  pip install fpdf2>=2.7.0")
     sys.exit(1)
 
+try:
+    from barcode_stamper import stamp_card_image, is_barcode_available
+except ImportError:
+    try:
+        from .barcode_stamper import stamp_card_image, is_barcode_available
+    except Exception:
+        stamp_card_image = None
+        is_barcode_available = lambda: False
+
 BASIC_LAND_NAMES = {
     "Forest", "Island", "Mountain", "Plains", "Swamp",
     "Snow-Covered Forest", "Snow-Covered Island",
@@ -44,25 +53,42 @@ COLS = 3
 ROWS = 3
 
 
+class CardPrintEntry:
+    """Represents a card instance to print with optional slot and optical ID."""
+    def __init__(self, filename: str, slot: str | None = None, optical_id: str | None = None):
+        self.filename = filename
+        self.slot = slot
+        self.optical_id = optical_id
+
+
 def _sanitize_xml(xml_path: Path) -> str:
     """Replace '--' inside XML comment bodies to avoid ET.ParseError."""
     text = xml_path.read_text(encoding="utf-8", errors="replace")
     return re.sub(r'(<!--.*?)--(?=.*?-->)', r'\1-', text, flags=re.DOTALL)
 
 
-def parse_card_names(xml_path: Path) -> list[str]:
-    """Return list of card image filenames from <cardpacks><fronts><card><name>."""
+def parse_card_entries(xml_path: Path) -> list[CardPrintEntry]:
+    """Return list of CardPrintEntry from <cardpacks><fronts><card>."""
     try:
         tree = ET.parse(xml_path)
     except ET.ParseError:
         tree = ET.parse(io.StringIO(_sanitize_xml(xml_path)))
     root = tree.getroot()
-    names = []
+    entries: list[CardPrintEntry] = []
     for card in root.findall(".//fronts/card"):
         name_el = card.find("name")
         if name_el is not None and name_el.text:
-            names.append(name_el.text.strip())
-    return names
+            slot_el = card.find("slot")
+            optical_el = card.find("optical_id")
+            slot_val = slot_el.text.strip() if slot_el is not None and slot_el.text else None
+            opt_val = optical_el.text.strip() if optical_el is not None and optical_el.text else None
+            entries.append(CardPrintEntry(name_el.text.strip(), slot_val, opt_val))
+    return entries
+
+
+def parse_card_names(xml_path: Path) -> list[str]:
+    """Return list of card image filenames from <cardpacks><fronts><card><name>."""
+    return [e.filename for e in parse_card_entries(xml_path)]
 
 
 def card_display_name(filename: str) -> str:
@@ -82,6 +108,7 @@ def build_pdf(
     watermark: bool,
     skip_basic_lands: bool,
     deck_name: str | None = None,
+    no_barcode: bool = False,
 ) -> Path:
     deck = deck_name or xml_path.stem
     if deck.startswith("cards_"):
@@ -92,12 +119,12 @@ def build_pdf(
     output_dir = xml_dir / "ready2Print" / deck
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    card_names = parse_card_names(xml_path)
+    card_entries = parse_card_entries(xml_path)
 
     if skip_basic_lands:
-        card_names = [n for n in card_names if card_display_name(n) not in BASIC_LAND_NAMES]
+        card_entries = [e for e in card_entries if card_display_name(e.filename) not in BASIC_LAND_NAMES]
 
-    if not card_names:
+    if not card_entries:
         print("WARNING: No cards to print after applying filters.")
 
     # Centered margins with gap between cards
@@ -109,26 +136,39 @@ def build_pdf(
     pdf.set_font("Helvetica", size=7)
 
     per_page = COLS * ROWS
-    for page_idx in range(0, max(1, len(card_names)), per_page):
+    for page_idx in range(0, max(1, len(card_entries)), per_page):
         pdf.add_page()
-        page_cards = card_names[page_idx : page_idx + per_page]
+        page_cards = card_entries[page_idx : page_idx + per_page]
 
-        for slot, img_name in enumerate(page_cards):
+        for slot, entry in enumerate(page_cards):
+            global_idx = page_idx + slot + 1
             row = slot // COLS
             col = slot % COLS
             x = x_margin + col * (CARD_W + gap)
             y = y_margin + row * (CARD_H + gap)
 
-            img_path = image_dir / img_name
+            img_path = image_dir / entry.filename
             if img_path.exists():
+                image_to_embed = img_path
+                if not no_barcode and entry.optical_id and stamp_card_image:
+                    stamped_dir = output_dir / "cards"
+                    slot_label = entry.slot or f"{global_idx}"
+                    stamped_path = stamped_dir / f"{global_idx:03d}_slot_{slot_label}_{img_path.name}"
+                    try:
+                        stamped = stamp_card_image(img_path, entry.optical_id, stamped_path)
+                        if stamped and stamped_path.exists():
+                            image_to_embed = stamped_path
+                    except Exception as exc:
+                        print(f"  WARNING: Could not stamp barcode for {entry.filename}: {exc}")
+
                 try:
-                    pdf.image(str(img_path), x=x, y=y, w=CARD_W, h=CARD_H)
+                    pdf.image(str(image_to_embed), x=x, y=y, w=CARD_W, h=CARD_H)
                 except Exception as exc:
-                    print(f"  WARNING: Could not embed {img_name}: {exc}")
-                    _draw_placeholder(pdf, x, y, img_name)
+                    print(f"  WARNING: Could not embed {entry.filename}: {exc}")
+                    _draw_placeholder(pdf, x, y, entry.filename)
             else:
                 print(f"  WARNING: Image not found: {img_path.name}")
-                _draw_placeholder(pdf, x, y, img_name)
+                _draw_placeholder(pdf, x, y, entry.filename)
 
             if cut_marks:
                 _draw_cut_marks(pdf, x, y)
@@ -202,6 +242,8 @@ def main() -> int:
                         help="Add diagonal 'Playtest Card' text across each card.")
     parser.add_argument("--skip-basic-lands", action="store_true",
                         help="Omit basic land cards (Forest/Island/Mountain/Plains/Swamp).")
+    parser.add_argument("--no-barcode", action="store_true",
+                        help="Disable stamping optical Data Matrix barcodes on cards.")
     args = parser.parse_args()
 
     xml_path = Path(args.xml_file)
@@ -220,6 +262,7 @@ def main() -> int:
             watermark=args.watermark,
             skip_basic_lands=args.skip_basic_lands,
             deck_name=args.deck_name,
+            no_barcode=args.no_barcode,
         )
         print(f"  PDF created: {output}")
         return 0

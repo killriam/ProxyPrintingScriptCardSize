@@ -17,6 +17,15 @@ import glob
 import time
 from pathlib import Path
 
+try:
+    from barcode_stamper import stamp_card_image, is_barcode_available
+except ImportError:
+    try:
+        from .barcode_stamper import stamp_card_image, is_barcode_available
+    except Exception:
+        stamp_card_image = None
+        is_barcode_available = lambda: False
+
 def main():
     # Set up argument parser
     parser = argparse.ArgumentParser(description="Create a multi-page Scribus document from an XML file")
@@ -26,6 +35,7 @@ def main():
     parser.add_argument("--deck-name", "-d", default=None, help="Override deck name used for image lookup and output filename")
     parser.add_argument("--base-dir", "-b", help="Base directory for the project")
     parser.add_argument("--create-cardback", action="store_true", help="Create cardback SLA file")
+    parser.add_argument("--no-barcode", action="store_true", help="Disable stamping optical Data Matrix barcodes on cards")
     args = parser.parse_args()
     script_dir = Path(__file__).resolve().parent
     base_dir = Path(args.base_dir) if args.base_dir else script_dir
@@ -90,7 +100,7 @@ def main():
             
         # Collect card image paths
         card_image_paths = []
-        for card in cards:
+        for i, card in enumerate(cards):
             # Try to find the card name element
             card_name_elem = card.find("name")
             if card_name_elem is None:
@@ -107,8 +117,26 @@ def main():
             actual_image_path = find_matching_image_file(image_dir, card_filename)
             
             if actual_image_path and os.path.isfile(actual_image_path):
+                image_to_use = actual_image_path
+                optical_elem = card.find("optical_id")
+                slot_elem = card.find("slot")
+
+                if not args.no_barcode and optical_elem is not None and optical_elem.text and stamp_card_image:
+                    optical_id = optical_elem.text.strip()
+                    slot_str = slot_elem.text.strip() if slot_elem is not None and slot_elem.text else f"{i+1}"
+                    cards_out_dir = output_path / "cards"
+                    stamped_filename = f"{i+1:03d}_slot_{slot_str}_{Path(actual_image_path).name}"
+                    stamped_path = cards_out_dir / stamped_filename
+                    try:
+                        stamped = stamp_card_image(actual_image_path, optical_id, stamped_path)
+                        if stamped and stamped_path.exists():
+                            image_to_use = str(stamped_path)
+                            print(f"Stamped optical barcode [{optical_id}] (slot #{slot_str}) -> {stamped_path.name}")
+                    except Exception as exc:
+                        print(f"Warning: Could not stamp barcode for {card_filename}: {exc}")
+
                 # Use absolute forward-slash path — avoids Scribus relative-path issues on Windows
-                abs_path = str(Path(actual_image_path).resolve()).replace('\\', '/')
+                abs_path = str(Path(image_to_use).resolve()).replace('\\', '/')
                 card_image_paths.append(abs_path)
                 print(f"Found image for card: {card_filename} -> {abs_path}")
             else:
