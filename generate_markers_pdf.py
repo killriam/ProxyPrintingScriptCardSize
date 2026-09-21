@@ -138,9 +138,9 @@ def build_markers_pdf(
     xml_path: Path,
     deck_name: str | None = None,
     output_dir: Path | None = None,
-    cols: int = 7,
-    rows: int = 40,
-    marker_w: float = 25.0,
+    cols: int = 12,
+    rows: int = 45,
+    marker_w: float = 12.0,
     gap_x: float = 2.0,
     gap_y: float = 1.5,
     skip_basic_lands: bool = False,
@@ -183,7 +183,6 @@ def build_markers_pdf(
     pdf.set_auto_page_break(False)
 
     badge_cache: dict[str, io.BytesIO] = {}
-    is_compact = marker_w < 12.0
 
     for page_idx in range(total_pages):
         pdf.add_page()
@@ -193,7 +192,7 @@ def build_markers_pdf(
         pdf.set_text_color(120, 120, 120)
         header_text = (
             f"Deck: {resolved_deck}  |  Sheet {page_idx + 1} of {total_pages}  |  "
-            f"{len(entries)} Slip-in ID Markers (3.6 mm footer height)  |  8x18 Data Matrix"
+            f"{len(entries)} Slip-in ID Markers (Data Matrix & Number Only)  |  8x18 Data Matrix"
         )
         pdf.set_xy(margin_x, margin_y - 4.5)
         pdf.cell(grid_w, 3.5, header_text, align="C")
@@ -208,7 +207,7 @@ def build_markers_pdf(
             y = margin_y + r * (MARKER_H + gap_y)
 
             # Hairline cutting border around marker
-            pdf.set_draw_color(200, 200, 200)
+            pdf.set_draw_color(190, 190, 190)
             pdf.set_line_width(0.12)
             pdf.rect(x, y, marker_w, MARKER_H)
 
@@ -230,26 +229,16 @@ def build_markers_pdf(
                     bc_y = y
                     pdf.image(cached_buf, x=bc_x, y=bc_y, w=BARCODE_W, h=BARCODE_H)
 
-            # Text section (only if not compact mode)
-            if not is_compact:
-                text_x = x + BARCODE_W + 0.8
-                text_w = marker_w - BARCODE_W - 1.2
+            # Number-only text section (strictly slot number e.g. "#15" — no card names)
+            if marker_w > BARCODE_W + 1.5:
+                text_x = x + BARCODE_W + 0.3
+                text_w = marker_w - BARCODE_W - 0.5
+                slot_str = f"#{item.slot}" if item.slot is not None else ""
 
-                # Slot prefix + Card Name in single clean line (e.g. "#15 Cyclonic Rift")
-                slot_prefix = f"#{item.slot} " if item.slot is not None else ""
-                display_name = f"{slot_prefix}{item.card_name}".encode("latin-1", "replace").decode("latin-1")
-
-                pdf.set_font("Helvetica", "B" if item.slot is not None else "", 5.2)
-                pdf.set_text_color(30, 30, 30)
-
-                # Truncate if exceeds text width
-                if pdf.get_string_width(display_name) > text_w:
-                    while len(display_name) > 1 and pdf.get_string_width(display_name + "..") > text_w:
-                        display_name = display_name[:-1].rstrip()
-                    display_name = display_name + ".."
-
+                pdf.set_font("Helvetica", "B", 6.2)
+                pdf.set_text_color(20, 20, 20)
                 pdf.set_xy(text_x, y + 0.3)
-                pdf.cell(text_w, 3.0, display_name, align="L")
+                pdf.cell(text_w, 3.0, slot_str, align="C")
 
     pdf.output(str(out_pdf))
     print(f"Slip-in ID markers sheet generated: {out_pdf} ({len(entries)} markers, {total_pages} page(s))")
