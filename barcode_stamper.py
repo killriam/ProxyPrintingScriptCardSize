@@ -110,8 +110,9 @@ def stamp_card_image(
     badge_w, badge_h = badge.size
 
     x = (w - badge_w) // 2
-    # Scale y position proportionally to reference 936px card height
-    y = round(h * (872.0 / 936.0))
+    # Positioned in lower black footer (y=892..930 on 936px master), strictly below
+    # the collector/copyright line (y=876..888) in the clean black border.
+    y = round(h * (892.0 / 936.0))
 
     img.paste(badge, (x, y), badge)
 
