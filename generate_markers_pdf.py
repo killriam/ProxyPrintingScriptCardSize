@@ -116,10 +116,20 @@ def parse_marker_entries(xml_path: Path) -> tuple[list[MarkerEntry], int]:
 
         opt_id: str | None = None
         if opt_el is not None and opt_el.text and opt_el.text.strip():
-            opt_id = opt_el.text.strip().upper()
+            opt_id = opt_el.text.strip()
         elif slot_num is not None:
-            # Fallback synthesis if optical_id was not populated
-            opt_id = f"{deck_id:02X}{slot_num:02X}00"
+            # Clean slot-only payload
+            opt_id = str(slot_num)
+
+        # If slot was not explicitly set in <slot>, extract from optical_id
+        if slot_num is None and opt_id:
+            if opt_id.isdigit():
+                slot_num = int(opt_id)
+            elif len(opt_id) == 6:
+                try:
+                    slot_num = int(opt_id[2:4], 16)
+                except ValueError:
+                    pass
 
         # Format display name
         display_name = filename
