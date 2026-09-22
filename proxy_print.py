@@ -211,10 +211,10 @@ def main() -> int:
                         help="[a4 only] Add diagonal 'Playtest Card' text across each card.")
     parser.add_argument("--skip-basic-lands", action="store_true", default=None,
                         help="[a4 / markers] Omit basic land cards from the output.")
-    parser.add_argument("--cols", type=int, default=7,
-                        help="[markers only] Number of columns per sheet (default: 7).")
-    parser.add_argument("--rows", type=int, default=40,
-                        help="[markers only] Number of rows per sheet (default: 40).")
+    parser.add_argument("--cols", type=int, default=4,
+                        help="[markers only] Number of columns per sheet (default: 4).")
+    parser.add_argument("--rows", type=int, default=45,
+                        help="[markers only] Number of rows per sheet (default: 45).")
     parser.add_argument("--compact", action="store_true",
                         help="[markers only] Compact mode (8.0 mm width, exact proxy badge size).")
     args = parser.parse_args()

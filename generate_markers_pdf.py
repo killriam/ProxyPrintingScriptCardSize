@@ -103,6 +103,7 @@ def parse_marker_entries(xml_path: Path) -> tuple[list[MarkerEntry], int]:
 
     for card in root.findall(".//fronts/card"):
         name_el = card.find("name")
+        card_name_el = card.find("card_name")
         if name_el is None or not name_el.text:
             continue
 
@@ -131,13 +132,17 @@ def parse_marker_entries(xml_path: Path) -> tuple[list[MarkerEntry], int]:
                 except ValueError:
                     pass
 
-        # Format display name
-        display_name = filename
-        for suffix in ("_normal.jpg", "_normal.png", ".jpg", ".png"):
-            if display_name.lower().endswith(suffix):
-                display_name = display_name[:-len(suffix)]
-                break
-        display_name = display_name.replace("_", " ")
+        # Format display name: prefer <card_name> tag if present
+        if card_name_el is not None and card_name_el.text and card_name_el.text.strip():
+            display_name = card_name_el.text.strip()
+        else:
+            display_name = filename
+            for suffix in ("_normal.jpg", "_normal.png", ".jpg", ".png"):
+                if display_name.lower().endswith(suffix):
+                    display_name = display_name[:-len(suffix)]
+                    break
+            display_name = re.sub(r"_[a-z0-9]{3,4}_\w+$", "", display_name)
+            display_name = display_name.replace("_", " ")
 
         entries.append(MarkerEntry(display_name, slot_num, opt_id))
 
@@ -148,14 +153,16 @@ def build_markers_pdf(
     xml_path: Path,
     deck_name: str | None = None,
     output_dir: Path | None = None,
-    cols: int = 12,
+    cols: int = 4,
     rows: int = 45,
     marker_w: float = 12.0,
-    gap_x: float = 2.0,
-    gap_y: float = 1.5,
+    name_w: float = 32.0,
+    gap_x: float = 3.0,
+    gap_y: float = 2.0,
     skip_basic_lands: bool = False,
+    show_names: bool = True,
 ) -> Path:
-    """Build and save the DIN A4 slip-in ID markers sheet PDF."""
+    """Build and save the DIN A4 slip-in ID markers sheet PDF with orientation card names."""
     if not is_barcode_available():
         raise RuntimeError("Barcode libraries (Pillow, pyStrich) are missing or incomplete.")
 
@@ -181,11 +188,12 @@ def build_markers_pdf(
     out_pdf = out_folder / f"{resolved_deck}_markers.pdf"
 
     # Layout calculations
+    cell_w = marker_w + (1.2 + name_w if show_names else 0.0)
     per_page = cols * rows
-    grid_w = cols * marker_w + (cols - 1) * gap_x
+    grid_w = cols * cell_w + (cols - 1) * gap_x
     grid_h = rows * MARKER_H + (rows - 1) * gap_y
-    margin_x = max(2.0, (PAGE_W - grid_w) / 2.0)
-    margin_y = max(6.0, (PAGE_H - grid_h) / 2.0)
+    margin_x = max(4.0, (PAGE_W - grid_w) / 2.0)
+    margin_y = max(10.0, (PAGE_H - grid_h) / 2.0)
 
     total_pages = max(1, (len(entries) + per_page - 1) // per_page)
 
@@ -198,14 +206,33 @@ def build_markers_pdf(
         pdf.add_page()
 
         # Header metadata
-        pdf.set_font("Helvetica", "I", 6.5)
-        pdf.set_text_color(120, 120, 120)
+        pdf.set_font("Helvetica", "B", 7.5)
+        pdf.set_text_color(30, 41, 59)
         header_text = (
-            f"Deck: {resolved_deck}  |  Sheet {page_idx + 1} of {total_pages}  |  "
-            f"{len(entries)} Slip-in ID Markers (Data Matrix & Number Only)  |  8x18 Data Matrix"
+            f"Deck: {resolved_deck}   |   Slip-in ID Markers   |   Sheet {page_idx + 1} of {total_pages}   ({len(entries)} markers)"
         )
-        pdf.set_xy(margin_x, margin_y - 4.5)
+        pdf.set_xy(margin_x, margin_y - 10.0)
         pdf.cell(grid_w, 3.5, header_text, align="C")
+
+        pdf.set_font("Helvetica", "I", 6.0)
+        pdf.set_text_color(100, 116, 139)
+        sub_text = (
+            "Cut out the solid rectangle slips (12 x 3.6 mm) for card sleeves. "
+            "Card names on the right are for orientation only (do not cut out)."
+        )
+        pdf.set_xy(margin_x, margin_y - 6.2)
+        pdf.cell(grid_w, 3.0, sub_text, align="C")
+
+        # Column labels
+        pdf.set_font("Helvetica", "B", 5.5)
+        pdf.set_text_color(148, 163, 184)
+        for c in range(cols):
+            col_x = margin_x + c * (cell_w + gap_x)
+            pdf.set_xy(col_x, margin_y - 3.2)
+            pdf.cell(marker_w, 2.5, "CUT SLIP", align="C")
+            if show_names:
+                pdf.set_xy(col_x + marker_w + 1.2, margin_y - 3.2)
+                pdf.cell(name_w, 2.5, "CARD NAME (ORIENTATION)", align="L")
 
         page_entries = entries[page_idx * per_page : (page_idx + 1) * per_page]
 
@@ -213,13 +240,13 @@ def build_markers_pdf(
             c = idx % cols
             r = idx // cols
 
-            x = margin_x + c * (marker_w + gap_x)
+            cell_x = margin_x + c * (cell_w + gap_x)
             y = margin_y + r * (MARKER_H + gap_y)
 
-            # Hairline cutting border around marker
-            pdf.set_draw_color(190, 190, 190)
+            # Hairline cutting border around marker ONLY
+            pdf.set_draw_color(148, 163, 184)
             pdf.set_line_width(0.12)
-            pdf.rect(x, y, marker_w, MARKER_H)
+            pdf.rect(cell_x, y, marker_w, MARKER_H)
 
             # Render barcode badge
             if item.optical_id:
@@ -235,20 +262,33 @@ def build_markers_pdf(
 
                 cached_buf = badge_cache.get(item.optical_id)
                 if cached_buf:
-                    bc_x = x + 0.2
+                    bc_x = cell_x + 0.2
                     bc_y = y
                     pdf.image(cached_buf, x=bc_x, y=bc_y, w=BARCODE_W, h=BARCODE_H)
 
-            # Number-only text section (strictly slot number e.g. "#15" — no card names)
+            # Number-only text section inside the cut box (strictly slot number e.g. "#15")
             if marker_w > BARCODE_W + 1.5:
-                text_x = x + BARCODE_W + 0.3
-                text_w = marker_w - BARCODE_W - 0.5
+                text_x = cell_x + BARCODE_W + 0.2
+                text_w = marker_w - BARCODE_W - 0.4
                 slot_str = f"#{item.slot}" if item.slot is not None else ""
 
                 pdf.set_font("Helvetica", "B", 6.2)
-                pdf.set_text_color(20, 20, 20)
+                pdf.set_text_color(15, 23, 42)
                 pdf.set_xy(text_x, y + 0.3)
                 pdf.cell(text_w, 3.0, slot_str, align="C")
+
+            # Orientation card name outside the cut box
+            if show_names and item.card_name:
+                name_x = cell_x + marker_w + 1.2
+                pdf.set_font("Helvetica", "", 6.5)
+                pdf.set_text_color(30, 41, 59)
+                card_title = item.card_name
+                while pdf.get_string_width(card_title + "...") > name_w and len(card_title) > 3:
+                    card_title = card_title[:-1]
+                if card_title != item.card_name:
+                    card_title += "..."
+                pdf.set_xy(name_x, y + 0.3)
+                pdf.cell(name_w, 3.0, card_title, align="L")
 
     pdf.output(str(out_pdf))
     print(f"Slip-in ID markers sheet generated: {out_pdf} ({len(entries)} markers, {total_pages} page(s))")
@@ -264,18 +304,20 @@ def main() -> int:
                         help="Override deck name for output folder and filename.")
     parser.add_argument("--output-dir", default=None,
                         help="Custom output directory.")
-    parser.add_argument("--cols", type=int, default=7,
-                        help="Number of columns per sheet (default: 7).")
-    parser.add_argument("--rows", type=int, default=40,
-                        help="Number of rows per sheet (default: 40).")
-    parser.add_argument("--marker-w", type=float, default=25.0,
-                        help="Marker width in mm (default: 25.0).")
+    parser.add_argument("--cols", type=int, default=4,
+                        help="Number of columns per sheet (default: 4).")
+    parser.add_argument("--rows", type=int, default=45,
+                        help="Number of rows per sheet (default: 45).")
+    parser.add_argument("--marker-w", type=float, default=12.0,
+                        help="Marker cut box width in mm (default: 12.0).")
+    parser.add_argument("--name-w", type=float, default=32.0,
+                        help="Orientation card name width in mm (default: 32.0).")
     parser.add_argument("--compact", action="store_true",
-                        help="Compact mode: marker width 8.0 mm (exact proxy badge size, barcode only).")
-    parser.add_argument("--gap-x", type=float, default=2.0,
-                        help="Horizontal gap between markers in mm (default: 2.0).")
-    parser.add_argument("--gap-y", type=float, default=1.5,
-                        help="Vertical gap between markers in mm (default: 1.5).")
+                        help="Compact mode: dense grid of barcodes without orientation card names.")
+    parser.add_argument("--gap-x", type=float, default=3.0,
+                        help="Horizontal gap between columns in mm (default: 3.0).")
+    parser.add_argument("--gap-y", type=float, default=2.0,
+                        help="Vertical gap between markers in mm (default: 2.0).")
     parser.add_argument("--skip-basic-lands", action="store_true",
                         help="Omit basic lands from markers.")
 
@@ -289,6 +331,8 @@ def main() -> int:
         print(f"ERROR: XML file not found: {xml_path}")
         return 1
 
+    show_names = not args.compact
+    cols = 12 if args.compact else args.cols
     marker_width = 8.0 if args.compact else args.marker_w
 
     try:
@@ -296,12 +340,14 @@ def main() -> int:
             xml_path=xml_path,
             deck_name=args.deck_name,
             output_dir=Path(args.output_dir) if args.output_dir else None,
-            cols=args.cols,
+            cols=cols,
             rows=args.rows,
             marker_w=marker_width,
+            name_w=args.name_w,
             gap_x=args.gap_x,
             gap_y=args.gap_y,
             skip_basic_lands=args.skip_basic_lands,
+            show_names=show_names,
         )
         return 0
     except Exception as exc:
