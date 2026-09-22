@@ -184,7 +184,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="MaMo proxy print pipeline: download images then build Scribus SLA(s)."
     )
-    parser.add_argument("xml_file", help="Path to the proxy XML file from MaMo.")
+    parser.add_argument("xml_files", nargs="*", default=None,
+                        help="Path(s) to proxy XML file(s) from MaMo. If omitted, automatically detects "
+                             "and processes XML files in current folder or recent exports in Downloads.")
     parser.add_argument("--deck-name", "-d", default=None,
                         help="Override deck name used as image sub-folder and output folder.")
     parser.add_argument("--scribus", "-s", default=None,
@@ -201,13 +203,13 @@ def main() -> int:
                              "'a4' (9 cards/page DIN A4 PDF), or "
                              "'markers' (dense 8x18 Data Matrix slip-in marker sheet, 3.6mm height). "
                              "Defaults to format specified in XML <printoptions> or 'cardstock'.")
-    parser.add_argument("--gap", choices=["0", "0.2", "3"], default="0.2",
-                        help="[a4 only] Gap in mm between cards (default: 0.2).")
-    parser.add_argument("--cut-marks", action="store_true",
+    parser.add_argument("--gap", choices=["0", "0.2", "3"], default=None,
+                        help="[a4 only] Gap in mm between cards (default: from XML or 0.2).")
+    parser.add_argument("--cut-marks", action="store_true", default=None,
                         help="[a4 only] Draw 3 mm cut marks at each card corner.")
-    parser.add_argument("--watermark", action="store_true",
+    parser.add_argument("--watermark", action="store_true", default=None,
                         help="[a4 only] Add diagonal 'Playtest Card' text across each card.")
-    parser.add_argument("--skip-basic-lands", action="store_true",
+    parser.add_argument("--skip-basic-lands", action="store_true", default=None,
                         help="[a4 / markers] Omit basic land cards from the output.")
     parser.add_argument("--cols", type=int, default=7,
                         help="[markers only] Number of columns per sheet (default: 7).")
@@ -218,31 +220,121 @@ def main() -> int:
     args = parser.parse_args()
 
     script_dir = Path(__file__).resolve().parent
-    xml_path = Path(args.xml_file)
+
+    # Resolve XML files to process
+    targets: list[Path] = []
+    if args.xml_files:
+        import glob
+        for item in args.xml_files:
+            matched = glob.glob(item)
+            if matched:
+                targets.extend([Path(m) for m in matched])
+            else:
+                targets.append(Path(item))
+    else:
+        # Check current working directory for *.xml
+        cwd_xmls = sorted(Path.cwd().glob("*.xml"), key=lambda p: p.stat().st_mtime, reverse=True)
+        deck_xmls = [p for p in cwd_xmls if not p.name.endswith(".sla.xml") and p.name != "pom.xml"]
+        if deck_xmls:
+            targets = deck_xmls
+            print(f"Auto-detected {len(targets)} XML file(s) in current folder:")
+            for t in targets:
+                print(f"  * {t.name}")
+        else:
+            # Check user's Downloads directory for recent MaMo XML files
+            import time
+            downloads_dir = Path.home() / "Downloads"
+            if downloads_dir.exists():
+                recent_mamo: list[Path] = []
+                now = time.time()
+                for p in sorted(downloads_dir.glob("*.xml"), key=lambda x: x.stat().st_mtime, reverse=True):
+                    if now - p.stat().st_mtime < 10800:  # last 3 hours
+                        try:
+                            head = p.read_text(encoding="utf-8", errors="ignore")[:400]
+                            if "<cards" in head or "<fronts" in head or "<printoptions" in head or "proxy" in p.name.lower() or "markers" in p.name.lower():
+                                recent_mamo.append(p)
+                        except Exception:
+                            pass
+                if recent_mamo:
+                    print(f"Auto-detected {len(recent_mamo)} recent export(s) in Downloads folder:")
+                    for rx in recent_mamo:
+                        dest = Path.cwd() / rx.name
+                        shutil.copy2(rx, dest)
+                        print(f"  -> Copied to proxy-printing: {rx.name}")
+                        targets.append(dest)
+
+    if not targets:
+        print("\n" + "=" * 60)
+        print("No XML files found or specified.")
+        print("=" * 60)
+        print("To print proxies or slip-in markers:")
+        print("  1. Export XML file(s) from MaMo Deck Finishing step.")
+        print("  2. Run:")
+        print("       python proxy_print.py <file.xml>")
+        print("     Or simply copy the XML here and run:")
+        print("       python proxy_print.py")
+        print("     Or launch the graphical interface:")
+        print("       python proxy_gui.py")
+        print("=" * 60)
+        return 1
+
+    overall_code = 0
+    total = len(targets)
+    for idx, xml_file in enumerate(targets, 1):
+        if total > 1:
+            print("\n" + "#" * 60)
+            print(f"### [{idx}/{total}] Processing: {xml_file.name}")
+            print("#" * 60)
+        code = process_single_xml(xml_file, args, script_dir)
+        if code != 0 and overall_code == 0:
+            overall_code = code
+
+    if total > 1:
+        print("\n" + "=" * 60)
+        print(f"Pipeline completed for all {total} file(s).")
+        print("=" * 60)
+
+    return overall_code
+
+
+def process_single_xml(xml_path: Path, args, script_dir: Path) -> int:
     if not xml_path.is_absolute():
         xml_path = Path.cwd() / xml_path
 
+    if not xml_path.exists():
+        print(f"ERROR: XML file not found: {xml_path}")
+        return 1
+
+    po_attrib: dict[str, str] = {}
+    try:
+        try:
+            tree = ET.parse(str(xml_path))
+        except ET.ParseError:
+            import io
+            tree = ET.parse(io.StringIO(sanitize_xml(xml_path)))
+        root = tree.getroot()
+        po = root.find(".//printoptions")
+        if po is not None:
+            po_attrib = po.attrib
+    except Exception:
+        pass
+
     # Derive format: CLI argument takes precedence, then XML <printoptions format="...">, then cardstock
     resolved_format = args.format
+    if not resolved_format and "format" in po_attrib:
+        xml_fmt = po_attrib["format"].strip().lower()
+        if xml_fmt in ("cardstock", "a4", "markers", "stickers"):
+            resolved_format = "markers" if xml_fmt == "stickers" else xml_fmt
     if resolved_format == "stickers":
         resolved_format = "markers"
     if not resolved_format:
-        try:
-            try:
-                tree = ET.parse(str(xml_path))
-            except ET.ParseError:
-                import io
-                tree = ET.parse(io.StringIO(sanitize_xml(xml_path)))
-            root = tree.getroot()
-            po = root.find(".//printoptions")
-            if po is not None and "format" in po.attrib:
-                xml_fmt = po.attrib["format"].strip().lower()
-                if xml_fmt in ("cardstock", "a4", "markers", "stickers"):
-                    resolved_format = "markers" if xml_fmt == "stickers" else xml_fmt
-        except Exception:
-            pass
-    if not resolved_format:
         resolved_format = "cardstock"
+
+    # Derive print options from CLI if supplied, otherwise from XML printoptions
+    gap = args.gap or po_attrib.get("gap") or "0.2"
+    cut_marks = args.cut_marks if args.cut_marks is not None else (po_attrib.get("cut-marks", "").lower() == "true")
+    watermark = args.watermark if args.watermark is not None else (po_attrib.get("watermark", "").lower() == "true")
+    skip_basic_lands = args.skip_basic_lands if args.skip_basic_lands is not None else (po_attrib.get("skip-basic-lands", "").lower() == "true")
 
     # Derive a stable deck name by stripping the MaMo date+scope suffix
     # e.g. "MyDeck_2026-03-14_missing_proxy" -> "MyDeck"
@@ -268,7 +360,7 @@ def main() -> int:
                   "--rows", str(args.rows)]
         if getattr(args, "compact", False):
             st_cmd.append("--compact")
-        if args.skip_basic_lands:
+        if skip_basic_lands:
             st_cmd.append("--skip-basic-lands")
         st_result = subprocess.run(st_cmd)
         print()
@@ -309,12 +401,12 @@ def main() -> int:
         print("=" * 60)
         a4_cmd = [sys.executable, str(script_dir / "generate_a4_pdf.py"), str(xml_path),
                   "--deck-name", deck_name_resolved]
-        a4_cmd += ["--gap", args.gap]
-        if args.cut_marks:
+        a4_cmd += ["--gap", gap]
+        if cut_marks:
             a4_cmd.append("--cut-marks")
-        if args.watermark:
+        if watermark:
             a4_cmd.append("--watermark")
-        if args.skip_basic_lands:
+        if skip_basic_lands:
             a4_cmd.append("--skip-basic-lands")
         a4_result = subprocess.run(a4_cmd)
         print()

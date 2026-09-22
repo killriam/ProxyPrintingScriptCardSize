@@ -85,9 +85,16 @@ class ProxyPrintGUI:
             variable=self.format_var,
             value="a4",
             command=self._on_format_change,
+        ).pack(anchor="w", padx=8, pady=2)
+        ttk.Radiobutton(
+            frame_fmt,
+            text="Slip-in ID markers  (Data Matrix tags · PDF · no Scribus needed)",
+            variable=self.format_var,
+            value="markers",
+            command=self._on_format_change,
         ).pack(anchor="w", padx=8, pady=(2, 4))
 
-        # Container that holds EITHER card-stock or A4 options
+        # Container that holds EITHER card-stock, A4, or markers options
         self._options_container = ttk.Frame(self.root)
         self._options_container.pack(fill="x", padx=8)
 
@@ -113,8 +120,6 @@ class ProxyPrintGUI:
             side="left", fill="x", expand=True, padx=4
         )
         ttk.Button(bg_row, text="Browse…", command=self._browse_bg).pack(side="left")
-
-
 
         # ── A4 options ─────────────────────────────────────────────────────
         self.frame_a4 = ttk.LabelFrame(self._options_container, text="A4 options")
@@ -144,6 +149,21 @@ class ProxyPrintGUI:
         ttk.Checkbutton(
             self.frame_a4, text="Skip basic lands",
             variable=self.skip_lands_var,
+        ).pack(anchor="w", padx=8, pady=(2, 6))
+
+        # ── Markers options ────────────────────────────────────────────────
+        self.frame_markers = ttk.LabelFrame(self._options_container, text="Slip-in ID Markers options")
+        ttk.Label(
+            self.frame_markers,
+            text="Generates dense 8x18 Data Matrix tags (3.6 mm height) on DIN A4 paper.\nCut along guide lines and slide inside sleeve footers (zero adhesive needed).",
+            foreground="#475569",
+            justify="left",
+        ).pack(anchor="w", padx=8, pady=(4, 2))
+
+        self.compact_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            self.frame_markers, text="Compact mode (8.0 mm width, exact proxy badge size)",
+            variable=self.compact_var,
         ).pack(anchor="w", padx=8, pady=(2, 6))
 
         # Show the default format options
@@ -184,12 +204,16 @@ class ProxyPrintGUI:
     # ── Format toggle ─────────────────────────────────────────────────────────
 
     def _on_format_change(self) -> None:
-        if self.format_var.get() == "cardstock":
-            self.frame_a4.pack_forget()
+        fmt = self.format_var.get()
+        self.frame_cs.pack_forget()
+        self.frame_a4.pack_forget()
+        self.frame_markers.pack_forget()
+        if fmt == "cardstock":
             self.frame_cs.pack(fill="x")
-        else:
-            self.frame_cs.pack_forget()
+        elif fmt == "a4":
             self.frame_a4.pack(fill="x")
+        else:
+            self.frame_markers.pack(fill="x")
 
     # ── File dialogs ──────────────────────────────────────────────────────────
 
@@ -227,8 +251,8 @@ class ProxyPrintGUI:
             if opts is None:
                 return
             fmt = opts.get("format", "")
-            if fmt in ("cardstock", "a4"):
-                self.format_var.set(fmt)
+            if fmt in ("cardstock", "a4", "markers", "stickers"):
+                self.format_var.set("markers" if fmt == "stickers" else fmt)
                 self._on_format_change()
             if fmt == "a4":
                 gap = opts.get("gap", "")
@@ -299,7 +323,7 @@ class ProxyPrintGUI:
         """Validate prerequisites and show a user-facing error if something is missing."""
         from tkinter import messagebox
         fmt = self.format_var.get()
-        if fmt == "a4":
+        if fmt in ("a4", "markers"):
             try:
                 import importlib.util
                 if importlib.util.find_spec("fpdf") is None:
@@ -307,7 +331,7 @@ class ProxyPrintGUI:
             except ImportError:
                 messagebox.showerror(
                     "Missing dependency",
-                    "The fpdf2 package is required for DIN A4 PDF output but is not installed "
+                    f"The fpdf2 package is required for {fmt.upper()} output but is not installed "
                     "for the current Python interpreter.\n\n"
                     f"Install it with:\n  {sys.executable} -m pip install fpdf2>=2.7.0"
                 )
@@ -362,7 +386,7 @@ class ProxyPrintGUI:
             bg = self.bg_var.get().strip()
             if bg:
                 cmd += ["--background", bg]
-        else:  # a4
+        elif fmt == "a4":
             cmd += ["--gap", self.gap_var.get()]
             if self.cut_var.get():
                 cmd.append("--cut-marks")
@@ -370,6 +394,9 @@ class ProxyPrintGUI:
                 cmd.append("--watermark")
             if self.skip_lands_var.get():
                 cmd.append("--skip-basic-lands")
+        elif fmt == "markers":
+            if self.compact_var.get():
+                cmd.append("--compact")
 
         # Show the full command in the log
         display_cmd = " ".join(f'"{c}"' if " " in c else c for c in cmd)
