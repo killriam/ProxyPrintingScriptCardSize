@@ -12,6 +12,7 @@
 !proxy_print.py
 !proxy_gui.py
 !run.bat
+!gui.bat
 !export_to_pdf.py
 !generate_a4_pdf.py
 !generate_stickers_pdf.py
