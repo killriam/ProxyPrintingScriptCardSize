@@ -206,7 +206,9 @@ def main() -> int:
     parser.add_argument("--gap", choices=["0", "0.2", "3"], default=None,
                         help="[a4 only] Gap in mm between cards (default: from XML or 0.2).")
     parser.add_argument("--cut-marks", action="store_true", default=None,
-                        help="[a4 only] Draw 3 mm cut marks at each card corner.")
+                        help="[a4 / markers] Draw cut marks (perimeter trimmer ticks and plotter registration fiducials).")
+    parser.add_argument("--no-cut-marks", action="store_true", default=False,
+                        help="[markers] Disable cut marks.")
     parser.add_argument("--watermark", action="store_true", default=None,
                         help="[a4 only] Add diagonal 'Playtest Card' text across each card.")
     parser.add_argument("--skip-basic-lands", action="store_true", default=None,
@@ -362,6 +364,10 @@ def process_single_xml(xml_path: Path, args, script_dir: Path) -> int:
             st_cmd.append("--compact")
         if skip_basic_lands:
             st_cmd.append("--skip-basic-lands")
+        if getattr(args, "no_cut_marks", False):
+            st_cmd.append("--no-cut-marks")
+        elif getattr(args, "cut_marks", None) is True:
+            st_cmd.append("--cut-marks")
         st_result = subprocess.run(st_cmd)
         print()
         print("=" * 60)

@@ -234,6 +234,12 @@ class ProxyPrintGUI:
             text="Compact mode (dense 8mm barcodes only, omit orientation names)",
             variable=self.compact_var,
         ).pack(side="left", padx=4)
+        self.marker_cut_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            self.frame_markers,
+            text="Cut marks (trimmer & plotter guides)",
+            variable=self.marker_cut_var,
+        ).pack(side="left", padx=10)
 
         # Cardstock options
         self.frame_cs = ttk.Frame(self.opt_container)
@@ -480,8 +486,11 @@ class ProxyPrintGUI:
             if self.skip_lands_var.get():
                 cmd.append("--skip-basic-lands")
 
-        if mode in ("auto", "markers") and self.compact_var.get():
-            cmd.append("--compact")
+        if mode in ("auto", "markers"):
+            if self.compact_var.get():
+                cmd.append("--compact")
+            if not self.marker_cut_var.get():
+                cmd.append("--no-cut-marks")
 
         if mode == "cardstock":
             sc = self.scribus_var.get().strip()

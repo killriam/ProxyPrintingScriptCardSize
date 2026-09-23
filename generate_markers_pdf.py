@@ -29,6 +29,7 @@ import argparse
 import io
 import re
 import sys
+import time
 from pathlib import Path
 
 try:
@@ -161,8 +162,9 @@ def build_markers_pdf(
     gap_y: float = 2.0,
     skip_basic_lands: bool = False,
     show_names: bool = True,
+    cut_marks: bool = True,
 ) -> Path:
-    """Build and save the DIN A4 slip-in ID markers sheet PDF with orientation card names."""
+    """Build and save the DIN A4 slip-in ID markers sheet PDF with orientation card names and cut marks."""
     if not is_barcode_available():
         raise RuntimeError("Barcode libraries (Pillow, pyStrich) are missing or incomplete.")
 
@@ -204,6 +206,9 @@ def build_markers_pdf(
 
     for page_idx in range(total_pages):
         pdf.add_page()
+        page_entries = entries[page_idx * per_page : (page_idx + 1) * per_page]
+        rows_active = min(rows, (len(page_entries) + cols - 1) // cols)
+        active_h = rows_active * MARKER_H + (rows_active - 1) * gap_y
 
         # Header metadata
         pdf.set_font("Helvetica", "B", 7.5)
@@ -211,30 +216,86 @@ def build_markers_pdf(
         header_text = (
             f"Deck: {resolved_deck}   |   Slip-in ID Markers   |   Sheet {page_idx + 1} of {total_pages}   ({len(entries)} markers)"
         )
-        pdf.set_xy(margin_x, margin_y - 10.0)
+        pdf.set_xy(margin_x, margin_y - 12.0 if cut_marks else margin_y - 10.0)
         pdf.cell(grid_w, 3.5, header_text, align="C")
 
         pdf.set_font("Helvetica", "I", 6.0)
         pdf.set_text_color(100, 116, 139)
-        sub_text = (
-            "Cut out the solid rectangle slips (12 x 3.6 mm) for card sleeves. "
-            "Card names on the right are for orientation only (do not cut out)."
-        )
-        pdf.set_xy(margin_x, margin_y - 6.2)
+        if cut_marks:
+            sub_text = (
+                "Cut out solid slips (12 x 3.6 mm). Use perimeter cut marks & corner registration marks for cutting devices and trimmers."
+                if show_names else
+                "Cut out solid slips (8 x 3.6 mm). Use perimeter cut marks & corner registration marks for cutting devices and trimmers."
+            )
+        else:
+            sub_text = (
+                "Cut out the solid rectangle slips (12 x 3.6 mm) for card sleeves. "
+                "Card names on the right are for orientation only (do not cut out)."
+            )
+        pdf.set_xy(margin_x, margin_y - 8.2 if cut_marks else margin_y - 6.2)
         pdf.cell(grid_w, 3.0, sub_text, align="C")
 
-        # Column labels
-        pdf.set_font("Helvetica", "B", 5.5)
-        pdf.set_text_color(148, 163, 184)
-        for c in range(cols):
-            col_x = margin_x + c * (cell_w + gap_x)
-            pdf.set_xy(col_x, margin_y - 3.2)
-            pdf.cell(marker_w, 2.5, "CUT SLIP", align="C")
-            if show_names:
-                pdf.set_xy(col_x + marker_w + 1.2, margin_y - 3.2)
-                pdf.cell(name_w, 2.5, "CARD NAME (ORIENTATION)", align="L")
+        if cut_marks:
+            # 1. Optical Registration Marks for cutting plotters (Cricut, Silhouette, Brother ScanNCut)
+            reg_size = 5.0
+            pdf.set_fill_color(0, 0, 0)
+            pdf.set_draw_color(0, 0, 0)
+            pdf.set_line_width(0.5)
 
-        page_entries = entries[page_idx * per_page : (page_idx + 1) * per_page]
+            # Top-Left: Solid square fiducial (plotter origin)
+            pdf.rect(margin_x - 6.0, margin_y - 6.0, reg_size, reg_size, style="F")
+
+            # Top-Right: L-bracket
+            tr_x = margin_x + grid_w + 1.0
+            tr_y = margin_y - 6.0
+            pdf.line(tr_x, tr_y, tr_x + reg_size, tr_y)
+            pdf.line(tr_x + reg_size, tr_y, tr_x + reg_size, tr_y + reg_size)
+
+            # Bottom-Left: L-bracket
+            bl_x = margin_x - 6.0
+            bl_y = margin_y + grid_h + 1.0
+            pdf.line(bl_x, bl_y, bl_x, bl_y + reg_size)
+            pdf.line(bl_x, bl_y + reg_size, bl_x + reg_size, bl_y + reg_size)
+
+            # Bottom-Right: L-bracket
+            br_x = margin_x + grid_w + 1.0
+            br_y = margin_y + grid_h + 1.0
+            pdf.line(br_x + reg_size, br_y, br_x + reg_size, br_y + reg_size)
+            pdf.line(br_x, br_y + reg_size, br_x + reg_size, br_y + reg_size)
+
+            # 2. Margin Trimmer Cut Marks (for rotary cutters & guillotines)
+            pdf.set_draw_color(15, 23, 42)
+            pdf.set_line_width(0.18)
+
+            # Vertical cut marks (Top margin and bottom of active rows + bottom of page)
+            for c in range(cols):
+                col_x = margin_x + c * (cell_w + gap_x)
+                for x in (col_x, col_x + marker_w):
+                    # Top margin tick
+                    pdf.line(x, margin_y - 1.0, x, margin_y - 4.5)
+                    # Directly below active rows
+                    pdf.line(x, margin_y + active_h + 1.0, x, margin_y + active_h + 4.5)
+                    # Bottom of grid (if page isn't completely filled)
+                    if active_h < grid_h - 10:
+                        pdf.line(x, margin_y + grid_h + 1.0, x, margin_y + grid_h + 4.5)
+
+            # Horizontal cut marks (Left & Right margins for each active row)
+            for r in range(rows_active):
+                row_y = margin_y + r * (MARKER_H + gap_y)
+                for y_pos in (row_y, row_y + MARKER_H):
+                    pdf.line(margin_x - 1.0, y_pos, margin_x - 4.5, y_pos)
+                    pdf.line(margin_x + grid_w + 1.0, y_pos, margin_x + grid_w + 4.5, y_pos)
+        else:
+            # Column labels
+            pdf.set_font("Helvetica", "B", 5.5)
+            pdf.set_text_color(148, 163, 184)
+            for c in range(cols):
+                col_x = margin_x + c * (cell_w + gap_x)
+                pdf.set_xy(col_x, margin_y - 3.2)
+                pdf.cell(marker_w, 2.5, "CUT SLIP", align="C")
+                if show_names:
+                    pdf.set_xy(col_x + marker_w + 1.2, margin_y - 3.2)
+                    pdf.cell(name_w, 2.5, "CARD NAME (ORIENTATION)", align="L")
 
         for idx, item in enumerate(page_entries):
             c = idx % cols
@@ -244,8 +305,8 @@ def build_markers_pdf(
             y = margin_y + r * (MARKER_H + gap_y)
 
             # Hairline cutting border around marker ONLY
-            pdf.set_draw_color(148, 163, 184)
-            pdf.set_line_width(0.12)
+            pdf.set_draw_color(71, 85, 105)
+            pdf.set_line_width(0.15)
             pdf.rect(cell_x, y, marker_w, MARKER_H)
 
             # Render barcode badge
@@ -290,7 +351,14 @@ def build_markers_pdf(
                 pdf.set_xy(name_x, y + 0.3)
                 pdf.cell(name_w, 3.0, card_title, align="L")
 
-    pdf.output(str(out_pdf))
+    try:
+        pdf.output(str(out_pdf))
+    except PermissionError:
+        alt_pdf = out_folder / f"{resolved_deck}_markers_{int(time.time())}.pdf"
+        print(f"  Note: {out_pdf.name} is currently open in another program. Saved as {alt_pdf.name}")
+        pdf.output(str(alt_pdf))
+        out_pdf = alt_pdf
+
     print(f"Slip-in ID markers sheet generated: {out_pdf} ({len(entries)} markers, {total_pages} page(s))")
     return out_pdf
 
@@ -320,6 +388,10 @@ def main() -> int:
                         help="Vertical gap between markers in mm (default: 2.0).")
     parser.add_argument("--skip-basic-lands", action="store_true",
                         help="Omit basic lands from markers.")
+    parser.add_argument("--cut-marks", action="store_true", default=True,
+                        help="Draw cutting marks (perimeter trimmer ticks & corner plotter registration fiducials). Default: enabled.")
+    parser.add_argument("--no-cut-marks", action="store_false", dest="cut_marks",
+                        help="Disable cutting marks.")
 
     args = parser.parse_args()
 
@@ -348,6 +420,7 @@ def main() -> int:
             gap_y=args.gap_y,
             skip_basic_lands=args.skip_basic_lands,
             show_names=show_names,
+            cut_marks=args.cut_marks,
         )
         return 0
     except Exception as exc:
