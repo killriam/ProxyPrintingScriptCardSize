@@ -110,13 +110,13 @@ def stamp_card_image(
     badge_w, badge_h = badge.size
 
     x = (w - badge_w) // 2
-    # Positioned in lower black footer, shifted up ~8-10px to ensure corner rounding,
+    # Positioned in lower black footer, shifted up ~10-12px to ensure corner rounding,
     # rotary blade cutting, and trimming tolerances never cut into the Data Matrix barcode.
-    # Reference: y=882..920 on 936px master (y=639 on 680px normal), leaving a safe
+    # Reference: y=879..917 on 936px master (y=637 on 680px normal), leaving a safe
     # bottom black margin and zero obstruction of artist credit or copyright notices.
-    y = round(h * (882.0 / 936.0))
-    if y + badge_h > h - 3:
-        y = h - badge_h - 3
+    y = round(h * (879.0 / 936.0))
+    if y + badge_h > h - 5:
+        y = h - badge_h - 5
 
     img.paste(badge, (x, y), badge)
 
